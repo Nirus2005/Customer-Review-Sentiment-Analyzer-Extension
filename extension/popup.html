@@ -8,9 +8,9 @@
 
   <body>
     <main class="app">
-      <header>
+      <header class="app-header">
         <h1>Review Analyzer</h1>
-        <p>Analyze visible reviews on this page.</p>
+        <p>Analyze visible reviews or comments on the current page.</p>
       </header>
 
       <button id="analyzeBtn" type="button">
@@ -20,11 +20,31 @@
       <section id="loading" class="hidden">
         <div class="spinner"></div>
         <p>Analyzing reviews via AI model...</p>
+        <small>This may take a few seconds on the first run.</small>
+      </section>
+
+      <section id="emptyState" class="empty-state hidden">
+        <h2>No review text found</h2>
+        <p>
+          Try scrolling the page to load more reviews, then run the analyzer again.
+          This MVP works best on pages with visible comments or review cards.
+        </p>
       </section>
 
       <section id="errorBox" class="error hidden"></section>
 
       <section id="results" class="hidden">
+        <div class="result-header">
+          <div>
+            <h2>Analysis Results</h2>
+            <p id="sampleNote" class="sample-note"></p>
+          </div>
+
+          <button id="exportBtn" class="secondary-button" type="button">
+            Export JSON
+          </button>
+        </div>
+
         <div class="metric-grid">
           <div class="metric-card">
             <span class="metric-label">Reviews</span>
@@ -42,28 +62,41 @@
           </div>
         </div>
 
-        <div class="chart">
+        <div class="confidence-card">
+          <span class="metric-label">Average model confidence</span>
+          <strong id="averageConfidence">0%</strong>
+        </div>
+
+        <section class="chart-card">
+          <h2>Sentiment Breakdown</h2>
+
           <div class="chart-row">
-            <span>Positive</span>
+            <div class="chart-row-label">
+              <span>Positive</span>
+              <strong id="positiveChartLabel">0%</strong>
+            </div>
             <div class="bar-track">
               <div id="positiveBar" class="bar positive"></div>
             </div>
           </div>
 
           <div class="chart-row">
-            <span>Negative</span>
+            <div class="chart-row-label">
+              <span>Negative</span>
+              <strong id="negativeChartLabel">0%</strong>
+            </div>
             <div class="bar-track">
               <div id="negativeBar" class="bar negative"></div>
             </div>
           </div>
-        </div>
+        </section>
 
-        <section>
+        <section class="summary-card">
           <h2>AI Summary</h2>
           <p id="summaryText"></p>
         </section>
 
-        <section>
+        <section class="keywords-card">
           <h2>Common Issue Terms</h2>
           <ul id="keywordList"></ul>
         </section>

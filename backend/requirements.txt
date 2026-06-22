@@ -4,3 +4,13 @@ pydantic
 torch
 transformers==4.57.1
 python-dotenv
+safetensors>=0.4.3
+sentencepiece>=0.2.0
+chromadb
+langchain
+langchain-chroma
+langchain-core
+langchain-huggingface
+langchain-text-splitters
+sentence-transformers
+accelerate

@@ -1,0 +1,17 @@
+<conversation_summary>
+{CONVERSATION_SUMMARY}
+</conversation_summary>
+
+<recent_chat>
+{RECENT_CHAT}
+</recent_chat>
+
+<reviews>
+{CONTEXT}
+</reviews>
+
+<user_question>
+{USER_QUERY}
+</user_question>
+
+Answer:

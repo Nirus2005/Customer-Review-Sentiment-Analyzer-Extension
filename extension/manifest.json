@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Customer Review Sentiment Analyzer",
-  "version": "0.1.0",
-  "description": "Analyze visible customer reviews on a webpage using a FastAPI AI backend.",
+  "version": "0.2.0",
+  "description": "Analyze visible customer reviews and chat with them using session-based RAG.",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Analyze Reviews"
+    "default_title": "Review RAG Assistant"
   },
   "permissions": [
     "activeTab",

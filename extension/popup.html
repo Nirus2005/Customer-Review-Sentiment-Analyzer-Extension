@@ -2,104 +2,111 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Review Analyzer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Review RAG Assistant</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
 
   <body>
     <main class="app">
       <header class="app-header">
-        <h1>Review Analyzer</h1>
-        <p>Analyze visible reviews or comments on the current page.</p>
+        <h1>Review RAG Assistant</h1>
+        <p>Index visible reviews from this page, then ask questions about them.</p>
       </header>
 
-      <button id="analyzeBtn" type="button">
-        Analyze Reviews
-      </button>
+      <section class="actions">
+        <button id="createSessionBtn" type="button">
+          Analyse Current Reviews
+        </button>
 
-      <section id="loading" class="hidden">
-        <div class="spinner"></div>
-        <p>Analyzing reviews via AI model...</p>
-        <small>This may take a few seconds on the first run.</small>
+        <button id="refreshSessionBtn" class="secondary-button" type="button" disabled>
+          Refresh Session
+        </button>
       </section>
 
-      <section id="emptyState" class="empty-state hidden">
-        <h2>No review text found</h2>
-        <p>
-          Try scrolling the page to load more reviews, then run the analyzer again.
-          This MVP works best on pages with visible comments or review cards.
-        </p>
+      <section id="loading" class="loading hidden">
+        <div class="spinner"></div>
+        <p id="loadingText">Working...</p>
       </section>
 
       <section id="errorBox" class="error hidden"></section>
 
-      <section id="results" class="hidden">
-        <div class="result-header">
-          <div>
-            <h2>Analysis Results</h2>
-            <p id="sampleNote" class="sample-note"></p>
-          </div>
+      <section id="emptyState" class="empty-state hidden">
+        <h2>No review text found</h2>
+        <p>
+          Try scrolling the page to load more reviews or comments, then index again.
+        </p>
+      </section>
 
-          <button id="exportBtn" class="secondary-button" type="button">
-            Export JSON
-          </button>
-        </div>
+      <section id="sessionPanel" class="session-panel hidden">
+        <h2>Session Ready</h2>
+        <p id="sessionStatus"></p>
+      </section>
 
+      <section id="dashboard" class="dashboard hidden">
         <div class="metric-grid">
           <div class="metric-card">
-            <span class="metric-label">Reviews</span>
+            <span>Reviews</span>
             <strong id="totalReviews">0</strong>
           </div>
 
           <div class="metric-card">
-            <span class="metric-label">Positive</span>
+            <span>Positive</span>
             <strong id="positivePct">0%</strong>
           </div>
 
           <div class="metric-card">
-            <span class="metric-label">Negative</span>
+            <span>Negative</span>
             <strong id="negativePct">0%</strong>
           </div>
         </div>
+      </section>
 
-        <div class="confidence-card">
-          <span class="metric-label">Average model confidence</span>
-          <strong id="averageConfidence">0%</strong>
+      <section id="suggestions" class="suggestions hidden">
+        <h2>Suggested questions</h2>
+
+        <button type="button" data-question="What are the main customer complaints?">
+          Main complaints
+        </button>
+
+        <button type="button" data-question="What do customers like most?">
+          What people like
+        </button>
+
+        <button type="button" data-question="Summarize the pros and cons.">
+          Pros and cons
+        </button>
+
+        <button type="button" data-question="Are there delivery, packaging, or shipping issues?">
+          Delivery issues
+        </button>
+
+        <button type="button" data-question="Are there quality or durability issues?">
+          Quality issues
+        </button>
+      </section>
+
+      <section id="chatPanel" class="chat-panel hidden">
+        <div class="chat-heading">
+          <h2>Review chat</h2>
+          <span class="chat-status">Grounded</span>
         </div>
 
-        <section class="chart-card">
-          <h2>Sentiment Breakdown</h2>
+        <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
 
-          <div class="chart-row">
-            <div class="chart-row-label">
-              <span>Positive</span>
-              <strong id="positiveChartLabel">0%</strong>
-            </div>
-            <div class="bar-track">
-              <div id="positiveBar" class="bar positive"></div>
-            </div>
-          </div>
+        <form id="chatForm" class="chat-form">
+          <textarea
+            id="questionInput"
+            rows="2"
+            aria-label="Ask about the visible reviews"
+            placeholder="Ask about the visible reviews..."
+            disabled
+          ></textarea>
 
-          <div class="chart-row">
-            <div class="chart-row-label">
-              <span>Negative</span>
-              <strong id="negativeChartLabel">0%</strong>
-            </div>
-            <div class="bar-track">
-              <div id="negativeBar" class="bar negative"></div>
-            </div>
-          </div>
-        </section>
-
-        <section class="summary-card">
-          <h2>AI Summary</h2>
-          <p id="summaryText"></p>
-        </section>
-
-        <section class="keywords-card">
-          <h2>Common Issue Terms</h2>
-          <ul id="keywordList"></ul>
-        </section>
+          <button id="sendBtn" type="submit" disabled>
+            Send
+          </button>
+        </form>
       </section>
     </main>
 

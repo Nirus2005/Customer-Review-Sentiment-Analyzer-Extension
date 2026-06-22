@@ -1,0 +1,22 @@
+Summarize the older conversation for a review-based shopping assistant.
+
+Keep only information useful for future follow-up questions:
+- user preferences
+- products or options discussed
+- concerns the user cares about
+- conclusions already reached
+- unresolved questions
+- references like "this one" or "the first option"
+
+Do not add new facts.
+Do not invent anything.
+Do not include unnecessary small talk.
+Keep it under 180 tokens.
+
+Previous summary:
+{OLD_SUMMARY}
+
+Older chat:
+{OLDER_CHAT}
+
+Updated summary:

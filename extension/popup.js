@@ -1,42 +1,57 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
-const SCRAPE_LIMIT = 80;
+const SCRAPE_LIMIT = 100;
 
-let latestAnalysis = null;
+let currentSessionId = null;
+let chatBusy = false;
 
-const analyzeBtn = document.getElementById("analyzeBtn");
-const exportBtn = document.getElementById("exportBtn");
-
+const createSessionBtn = document.getElementById("createSessionBtn");
+const refreshSessionBtn = document.getElementById("refreshSessionBtn");
 const loading = document.getElementById("loading");
+const loadingText = document.getElementById("loadingText");
 const errorBox = document.getElementById("errorBox");
 const emptyState = document.getElementById("emptyState");
-const results = document.getElementById("results");
 
+const sessionPanel = document.getElementById("sessionPanel");
+const sessionStatus = document.getElementById("sessionStatus");
+
+const dashboard = document.getElementById("dashboard");
 const totalReviews = document.getElementById("totalReviews");
 const positivePct = document.getElementById("positivePct");
 const negativePct = document.getElementById("negativePct");
-const averageConfidence = document.getElementById("averageConfidence");
 
-const positiveBar = document.getElementById("positiveBar");
-const negativeBar = document.getElementById("negativeBar");
-const positiveChartLabel = document.getElementById("positiveChartLabel");
-const negativeChartLabel = document.getElementById("negativeChartLabel");
+const suggestions = document.getElementById("suggestions");
+const chatPanel = document.getElementById("chatPanel");
+const chatMessages = document.getElementById("chatMessages");
+const chatForm = document.getElementById("chatForm");
+const questionInput = document.getElementById("questionInput");
+const sendBtn = document.getElementById("sendBtn");
 
-const summaryText = document.getElementById("summaryText");
-const keywordList = document.getElementById("keywordList");
-const sampleNote = document.getElementById("sampleNote");
+createSessionBtn.addEventListener("click", () => createOrRefreshSession(false));
+refreshSessionBtn.addEventListener("click", () => createOrRefreshSession(true));
+chatForm.addEventListener("submit", handleChatSubmit);
 
-analyzeBtn.addEventListener("click", handleAnalyzeClick);
-exportBtn.addEventListener("click", handleExportClick);
+suggestions.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-question]");
 
-async function handleAnalyzeClick() {
-  setLoadingState(true);
+  if (!button) {
+    return;
+  }
+
+  sendQuestion(button.dataset.question);
+});
+
+async function createOrRefreshSession(shouldRefresh) {
+  setBusy(true, "Scraping visible reviews and creating a RAG session...");
   clearError();
   hideEmptyState();
-  hideResults();
-
-  latestAnalysis = null;
 
   try {
+    if (shouldRefresh && currentSessionId) {
+      await deleteSessionQuietly(currentSessionId);
+    }
+
+    resetSessionUi();
+
     const [tab] = await chrome.tabs.query({
       active: true,
       currentWindow: true
@@ -58,48 +73,48 @@ async function handleAnalyzeClick() {
     };
 
     const reviews = scrapeResult.reviews || [];
-    const hitLimit = Boolean(scrapeResult.hitLimit);
 
     if (!reviews.length) {
       showEmptyState();
       return;
     }
 
-    const response = await fetch(`${API_BASE_URL}/v1/analyze`, {
+    const response = await fetch(`${API_BASE_URL}/v1/rag/sessions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ reviews })
+      body: JSON.stringify({
+        page_url: tab.url || null,
+        page_title: tab.title || null,
+        reviews
+      })
     });
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => null);
-      throw new Error(
-        errorPayload?.detail || `Backend error: ${response.status}`
-      );
+      throw new Error(errorPayload?.detail || `Backend error: ${response.status}`);
     }
 
-    const data = await response.json();
+    const sessionData = await response.json();
+    currentSessionId = sessionData.session_id;
 
-    latestAnalysis = {
-      exported_at: new Date().toISOString(),
-      source_url: tab.url || null,
-      source_title: tab.title || null,
-      scrape_limit: SCRAPE_LIMIT,
-      scraped_reviews_before_backend_filtering: reviews.length,
-      hit_scrape_limit: hitLimit,
-      analysis: data
-    };
+    renderSessionReady(sessionData, scrapeResult.hitLimit);
+    enableChat();
 
-    renderResults(data, {
-      scrapedCount: reviews.length,
-      hitLimit
+    appendAssistantMessage(
+      "Session ready. Ask me about complaints, positives, risks, delivery issues, quality issues, or anything else in the visible reviews.",
+      []
+    );
+
+    // Optional: keep your old sentiment dashboard alive without blocking chat.
+    runSentimentDashboard(reviews).catch(() => {
+      dashboard.classList.add("hidden");
     });
   } catch (error) {
-    showError(error.message || "Something went wrong.");
+    showError(error.message || "Failed to create RAG session.");
   } finally {
-    setLoadingState(false);
+    setBusy(false);
   }
 }
 
@@ -152,7 +167,7 @@ function scrapeReviewsFromPage(limit) {
       }
     }
 
-    // Stop early if a strong selector found enough useful text.
+    // Stop early when a strong selector finds enough review-like text.
     if (reviews.length >= 10) {
       return {
         reviews,
@@ -167,110 +182,229 @@ function scrapeReviewsFromPage(limit) {
   };
 }
 
-function renderResults(data, scrapeMeta) {
-  const positive = Number(data.sentiment?.positive_pct || 0);
-  const negative = Number(data.sentiment?.negative_pct || 0);
-  const confidence = Number(data.sentiment?.average_confidence || 0) * 100;
+async function runSentimentDashboard(reviews) {
+  const response = await fetch(`${API_BASE_URL}/v1/analyze`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ reviews })
+  });
+
+  if (!response.ok) {
+    return;
+  }
+
+  const data = await response.json();
 
   totalReviews.textContent = String(data.total_reviews || 0);
-  positivePct.textContent = `${formatPercent(positive)}%`;
-  negativePct.textContent = `${formatPercent(negative)}%`;
-  averageConfidence.textContent = `${formatPercent(confidence)}%`;
+  positivePct.textContent = `${formatPercent(data.sentiment?.positive_pct || 0)}%`;
+  negativePct.textContent = `${formatPercent(data.sentiment?.negative_pct || 0)}%`;
 
-  positiveChartLabel.textContent = `${formatPercent(positive)}%`;
-  negativeChartLabel.textContent = `${formatPercent(negative)}%`;
-
-  positiveBar.style.width = `${clampPercent(positive)}%`;
-  negativeBar.style.width = `${clampPercent(negative)}%`;
-
-  summaryText.textContent = data.summary || "No summary available.";
-
-  renderKeywords(data.top_negative_terms || []);
-
-  sampleNote.textContent = buildSampleNote(data, scrapeMeta);
-
-  results.classList.remove("hidden");
+  dashboard.classList.remove("hidden");
 }
 
-function renderKeywords(keywords) {
-  keywordList.innerHTML = "";
+async function handleChatSubmit(event) {
+  event.preventDefault();
 
-  if (!keywords.length) {
-    const li = document.createElement("li");
-    li.textContent = "No repeated issue terms found.";
-    li.className = "keyword-empty";
-    keywordList.appendChild(li);
+  const question = questionInput.value.trim();
+
+  if (!question) {
     return;
   }
 
-  for (const item of keywords) {
-    const li = document.createElement("li");
-    li.textContent = `${item.term} (${item.count})`;
-    keywordList.appendChild(li);
-  }
+  await sendQuestion(question);
 }
 
-function buildSampleNote(data, scrapeMeta) {
-  const backendCount = data.total_reviews || 0;
-  const scrapedCount = scrapeMeta.scrapedCount || backendCount;
-
-  if (scrapeMeta.hitLimit) {
-    return `Analyzed ${backendCount} reviews from the first ${scrapedCount} visible matches. Sample limit: ${SCRAPE_LIMIT}.`;
-  }
-
-  return `Analyzed ${backendCount} visible reviews found on this page.`;
-}
-
-function handleExportClick() {
-  if (!latestAnalysis) {
-    showError("No analysis available to export yet.");
+async function sendQuestion(question) {
+  if (!currentSessionId) {
+    showError("Create a RAG session first.");
     return;
   }
 
-  const blob = new Blob(
-    [JSON.stringify(latestAnalysis, null, 2)],
-    { type: "application/json" }
-  );
-
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[:.]/g, "-");
-
-  anchor.href = url;
-  anchor.download = `review-analysis-${timestamp}.json`;
-  anchor.click();
-
-  URL.revokeObjectURL(url);
-}
-
-function formatPercent(value) {
-  if (!Number.isFinite(value)) {
-    return "0";
+  if (chatBusy) {
+    return;
   }
 
-  const rounded = Math.round(value * 10) / 10;
+  clearError();
 
-  if (Number.isInteger(rounded)) {
-    return String(rounded);
+  appendUserMessage(question);
+  questionInput.value = "";
+
+  const loadingMessage = appendAssistantMessage("Thinking over the retrieved reviews...", [], true);
+
+  setChatBusy(true);
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/v1/rag/sessions/${currentSessionId}/chat`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ question })
+      }
+    );
+
+    if (!response.ok) {
+      const errorPayload = await response.json().catch(() => null);
+      throw new Error(errorPayload?.detail || `Backend error: ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    loadingMessage.remove();
+    appendAssistantMessage(data.answer, data.sources || []);
+  } catch (error) {
+    loadingMessage.remove();
+    showError(error.message || "Chat request failed.");
+  } finally {
+    setChatBusy(false);
   }
-
-  return rounded.toFixed(1);
 }
 
-function clampPercent(value) {
-  if (!Number.isFinite(value)) {
-    return 0;
-  }
+function renderSessionReady(sessionData, hitLimit) {
+  const limitText = hitLimit
+    ? ` Scrape limit reached: ${SCRAPE_LIMIT} visible matches.`
+    : "";
 
-  return Math.max(0, Math.min(100, value));
+  sessionStatus.textContent =
+    `Indexed ${sessionData.review_count} reviews into ${sessionData.chunk_count} chunks.` +
+    limitText;
+
+  sessionPanel.classList.remove("hidden");
+  suggestions.classList.remove("hidden");
+  chatPanel.classList.remove("hidden");
+  refreshSessionBtn.disabled = false;
 }
 
-function setLoadingState(isLoading) {
-  analyzeBtn.disabled = isLoading;
-  loading.classList.toggle("hidden", !isLoading);
+function enableChat() {
+  questionInput.disabled = false;
+  sendBtn.disabled = false;
+}
+
+function resetSessionUi() {
+  currentSessionId = null;
+
+  sessionPanel.classList.add("hidden");
+  dashboard.classList.add("hidden");
+  suggestions.classList.add("hidden");
+  chatPanel.classList.add("hidden");
+
+  chatMessages.innerHTML = "";
+  questionInput.value = "";
+  questionInput.disabled = true;
+  sendBtn.disabled = true;
+  refreshSessionBtn.disabled = true;
+}
+
+function appendUserMessage(text) {
+  const message = document.createElement("div");
+  message.className = "message user";
+
+  const label = document.createElement("strong");
+  label.className = "message-label";
+  label.textContent = "You";
+
+  const body = document.createElement("div");
+  body.className = "message-body";
+  body.textContent = text;
+
+  message.appendChild(label);
+  message.appendChild(body);
+  chatMessages.appendChild(message);
+  scrollChatToBottom();
+
+  return message;
+}
+
+function appendAssistantMessage(text, sources, isLoading = false) {
+  const message = document.createElement("div");
+  message.className = isLoading
+    ? "message assistant loading-message"
+    : "message assistant";
+
+  const label = document.createElement("strong");
+  label.className = "message-label";
+  label.textContent = "Assistant";
+
+  const body = document.createElement("div");
+  body.className = "message-body";
+  body.textContent = text;
+
+  message.appendChild(label);
+  message.appendChild(body);
+
+  if (sources && sources.length) {
+    message.appendChild(renderSources(sources));
+  }
+
+  chatMessages.appendChild(message);
+  scrollChatToBottom();
+
+  return message;
+}
+
+function renderSources(sources) {
+  const details = document.createElement("details");
+  details.className = "sources";
+
+  const summary = document.createElement("summary");
+  summary.textContent = `Show sources (${sources.length})`;
+  details.appendChild(summary);
+
+  for (const source of sources) {
+    const item = document.createElement("div");
+    item.className = "source-item";
+
+    const meta = document.createElement("div");
+    meta.className = "source-meta";
+
+    const scoreText =
+      typeof source.score === "number"
+        ? ` | score: ${source.score}`
+        : "";
+    const sentimentText = source.metadata?.sentiment_label
+      ? ` | ${source.metadata.sentiment_label}`
+      : "";
+
+    meta.textContent =
+      `${source.review_id || "review"}${sentimentText}${scoreText}`;
+
+    const text = document.createElement("div");
+    text.className = "source-text";
+    text.textContent = source.text || "";
+
+    item.appendChild(meta);
+    item.appendChild(text);
+    details.appendChild(item);
+  }
+
+  return details;
+}
+async function deleteSessionQuietly(sessionId) {
+  try {
+    await fetch(`${API_BASE_URL}/v1/rag/sessions/${sessionId}`, {
+      method: "DELETE"
+    });
+  } catch {
+    // Ignore cleanup errors in the popup.
+  }
+}
+
+function setBusy(isBusy, message = "Working...") {
+  createSessionBtn.disabled = isBusy;
+  refreshSessionBtn.disabled = isBusy || !currentSessionId;
+
+  loadingText.textContent = message;
+  loading.classList.toggle("hidden", !isBusy);
+}
+
+function setChatBusy(isBusy) {
+  chatBusy = isBusy;
+  questionInput.disabled = isBusy;
+  sendBtn.disabled = isBusy;
 }
 
 function showError(message) {
@@ -291,6 +425,22 @@ function hideEmptyState() {
   emptyState.classList.add("hidden");
 }
 
-function hideResults() {
-  results.classList.add("hidden");
+function scrollChatToBottom() {
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function formatPercent(value) {
+  const numericValue = Number(value);
+
+  if (!Number.isFinite(numericValue)) {
+    return "0";
+  }
+
+  const rounded = Math.round(numericValue * 10) / 10;
+
+  if (Number.isInteger(rounded)) {
+    return String(rounded);
+  }
+
+  return rounded.toFixed(1);
 }

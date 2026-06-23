@@ -3,6 +3,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from threading import RLock
+from typing import Any
 
 
 def utc_now() -> datetime:
@@ -21,6 +22,8 @@ class SessionRecord:
     chunk_count: int = 0
     chat_history: list[dict[str, str]] = field(default_factory=list)
     conversation_summary: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
+    analytics: dict[str, Any] = field(default_factory=dict)
 
 
 class SessionManager:
@@ -68,6 +71,8 @@ class SessionManager:
         session_id: str,
         review_count: int,
         chunk_count: int,
+        metrics: dict[str, Any] | None = None,
+        analytics: dict[str, Any] | None = None,
     ) -> None:
         with self._lock:
             record = self._sessions.get(session_id)
@@ -77,6 +82,8 @@ class SessionManager:
 
             record.review_count = review_count
             record.chunk_count = chunk_count
+            record.metrics = dict(metrics or {})
+            record.analytics = dict(analytics or {})
             record.last_accessed_at = utc_now()
 
     def append_chat_message(

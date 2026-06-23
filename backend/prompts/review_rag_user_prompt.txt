@@ -6,6 +6,14 @@
 {RECENT_CHAT}
 </recent_chat>
 
+<session_analytics>
+{SESSION_ANALYTICS}
+</session_analytics>
+
+<answer_style>
+{ANSWER_STYLE}
+</answer_style>
+
 <reviews>
 {CONTEXT}
 </reviews>

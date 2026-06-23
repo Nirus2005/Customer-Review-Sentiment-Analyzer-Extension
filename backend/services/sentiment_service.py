@@ -187,10 +187,41 @@ class SentimentService:
                 {
                     "sentiment_label": label,
                     "sentiment_score": round(confidence, 4),
+                    "polarity_label": "positive" if raw_label == "positive" else "negative",
                 }
             )
 
         return labels
+
+    def build_rag_analytics(
+        self,
+        reviews: list[str],
+        review_sentiments: list[dict[str, str | float]],
+    ) -> dict[str, list[dict[str, Any]]]:
+        cleaned_reviews = clean_reviews(reviews)
+        grouped_reviews: dict[str, list[str]] = {
+            "positive": [],
+            "negative": [],
+            "mixed": [],
+            "all": [],
+        }
+
+        for review, sentiment in zip(cleaned_reviews, review_sentiments):
+            label = str(sentiment.get("sentiment_label") or "unknown").lower()
+            grouped_reviews["all"].append(review)
+
+            if label in grouped_reviews:
+                grouped_reviews[label].append(review)
+
+        complaint_reviews = grouped_reviews["negative"] + grouped_reviews["mixed"]
+        praise_reviews = grouped_reviews["positive"] + grouped_reviews["mixed"]
+
+        return {
+            "top_overall_terms": self._extract_keywords(grouped_reviews["all"], limit=6),
+            "top_positive_terms": self._extract_keywords(praise_reviews, limit=6),
+            "top_negative_terms": self._extract_keywords(complaint_reviews, limit=6),
+            "top_mixed_terms": self._extract_keywords(grouped_reviews["mixed"], limit=4),
+        }
 
     def _predict_sentiment(self, reviews: list[str]):
         self.load_sentiment_model()

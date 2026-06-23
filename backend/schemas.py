@@ -6,8 +6,23 @@ from pydantic import BaseModel, Field
 
 MAX_REVIEWS = int(os.getenv("MAX_REVIEWS", "100"))
 
+
+class ReviewInput(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000)
+    rating: float | None = None
+    rating_max: float | None = None
+    upvotes: int | None = None
+    downvotes: int | None = None
+    helpfulness: str | None = None
+    helpful_votes: int | None = None
+    total_votes: int | None = None
+    review_date: str | None = None
+    author: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class AnalyzeRequest(BaseModel):
-    reviews: list[str] = Field(..., min_length=1, max_length=MAX_REVIEWS)
+    reviews: list[str | ReviewInput] = Field(..., min_length=1, max_length=MAX_REVIEWS)
 
 
 class SentimentBreakdown(BaseModel):
@@ -35,13 +50,25 @@ class AnalyzeResponse(BaseModel):
 class RagSessionCreateRequest(BaseModel):
     page_url: str | None = None
     page_title: str | None = None
-    reviews: list[str] = Field(..., min_length=1, max_length=MAX_REVIEWS)
+    reviews: list[str | ReviewInput] = Field(..., min_length=1, max_length=MAX_REVIEWS)
+
+
+class RagSessionMetrics(BaseModel):
+    total_reviews: int
+    positive: int
+    negative: int
+    mixed: int = 0
+    positive_pct: float
+    negative_pct: float
+    mixed_pct: float = 0.0
+    average_confidence: float = 0.0
 
 
 class RagSessionCreateResponse(BaseModel):
     session_id: str
     review_count: int
     chunk_count: int
+    metrics: RagSessionMetrics | None = None
     message: str
 
 
@@ -69,7 +96,6 @@ class RagChatResponse(BaseModel):
     session_id: str
     answer: str
     sources: list[RagSource] = Field(default_factory=list)
-    truncated: bool = False
     debug: RagDebug | None = None
 
 

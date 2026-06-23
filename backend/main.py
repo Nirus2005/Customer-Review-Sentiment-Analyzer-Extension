@@ -12,6 +12,7 @@ from schemas import (
     RagChatResponse,
     RagSessionCreateRequest,
     RagSessionCreateResponse,
+    RagSessionMetrics,
     RagSessionInfo,
 )
 from services.rag_chain import RagChainService
@@ -47,6 +48,59 @@ def cleanup_expired_sessions() -> None:
             session_id=record.session_id,
             collection_name=record.collection_name,
         )
+
+
+def build_session_metrics(
+    review_sentiments: list[dict[str, str | float]],
+) -> RagSessionMetrics:
+    total = len(review_sentiments)
+
+    if total == 0:
+        return RagSessionMetrics(
+            total_reviews=0,
+            positive=0,
+            negative=0,
+            mixed=0,
+            positive_pct=0.0,
+            negative_pct=0.0,
+            mixed_pct=0.0,
+            average_confidence=0.0,
+        )
+
+    positive = 0
+    negative = 0
+    mixed = 0
+    confidence_sum = 0.0
+
+    for sentiment in review_sentiments:
+        label = str(sentiment.get("sentiment_label") or "").lower()
+
+        if label == "positive":
+            positive += 1
+        elif label == "negative":
+            negative += 1
+        elif label == "mixed":
+            mixed += 1
+
+        confidence_sum += float(sentiment.get("sentiment_score") or 0.0)
+
+    return RagSessionMetrics(
+        total_reviews=total,
+        positive=positive,
+        negative=negative,
+        mixed=mixed,
+        positive_pct=round((positive / total) * 100, 2),
+        negative_pct=round((negative / total) * 100, 2),
+        mixed_pct=round((mixed / total) * 100, 2),
+        average_confidence=round(confidence_sum / total, 4),
+    )
+
+
+def model_to_dict(model) -> dict:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+
+    return model.dict()
 
 
 app = FastAPI(
@@ -103,6 +157,11 @@ def create_rag_session(payload: RagSessionCreateRequest):
 
     try:
         review_sentiments = sentiment_service.classify_reviews_for_rag(payload.reviews)
+        metrics = build_session_metrics(review_sentiments)
+        analytics = sentiment_service.build_rag_analytics(
+            reviews=payload.reviews,
+            review_sentiments=review_sentiments,
+        )
 
         review_count, chunk_count = vector_store_service.create_session_store(
             session_id=record.session_id,
@@ -117,12 +176,15 @@ def create_rag_session(payload: RagSessionCreateRequest):
             session_id=record.session_id,
             review_count=review_count,
             chunk_count=chunk_count,
+            metrics=model_to_dict(metrics),
+            analytics=analytics,
         )
 
         return RagSessionCreateResponse(
             session_id=record.session_id,
             review_count=review_count,
             chunk_count=chunk_count,
+            metrics=metrics,
             message="RAG session created.",
         )
 
@@ -166,6 +228,7 @@ def get_rag_session(session_id: str):
         last_accessed_at=record.last_accessed_at,
         expires_at=session_manager.expires_at(record),
         chat_turns=len(record.chat_history),
+        conversation_summary=record.conversation_summary,
     )
 
 

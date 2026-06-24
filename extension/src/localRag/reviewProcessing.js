@@ -126,6 +126,7 @@ export function createReviewChunks(reviews, sessionId) {
     const sentences = cleanText.split(/(?<=[.?!])\s+/).filter(Boolean);
     const reviewId = review.id || `${sessionId}-review-${reviewIndex + 1}`;
     const metadata = {
+      source_id: review.source_id ?? null,
       review_index: Number.isInteger(review.original_index) ? review.original_index : reviewIndex,
       sentiment_label: review.sentiment_label || "mixed",
       sentiment_score: review.sentiment_score ?? null,

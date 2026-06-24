@@ -2,9 +2,14 @@ import { RAG_LIMITS } from "../constants/ragConfig.js";
 import { ASPECT_PATTERNS } from "./reviewProcessing.js";
 import {
   buildAspectFallbackAnswer,
+  buildBalancedFallbackAnswer,
   buildOverallFallbackAnswer,
   inferFallbackIntent,
 } from "./evidenceSummary.js";
+import {
+  NEGATIVE_SIGNAL,
+  POSITIVE_SIGNAL,
+} from "./reviewProcessing.js";
 
 export { answerContradictsEvidence } from "./evidenceSummary.js";
 
@@ -72,12 +77,12 @@ export function buildAnalyticsText(session, analysis) {
 
     if (session.progressiveIndex && indexedReviews < totalReviews) {
       lines.push(
-        `Indexed evidence: ${indexedReviews} of ${totalReviews} reviews/comments; ` +
-        `${queuedReviews} queued for query-time indexing` +
+        `Analyzed evidence: ${indexedReviews} of ${totalReviews} reviews/comments; ` +
+        `${queuedReviews} queued for query-time analysis` +
         `${unqueuedReviews ? `; ${unqueuedReviews} skipped by local storage cap` : ""}.`,
       );
     } else {
-      lines.push(`Indexed reviews/comments: ${totalReviews}`);
+      lines.push(`Analyzed reviews/comments: ${totalReviews}`);
     }
   }
 
@@ -117,16 +122,28 @@ export function buildFallbackAnswer(query, chunks, session) {
       : buildSessionSentimentAnswer(metrics, session);
   }
 
+  if (intent === "balanced") {
+    return buildBalancedFallbackAnswer(query, chunks);
+  }
+
   if (intent === "neutral") {
     return buildAspectFallbackAnswer(query, chunks);
   }
 
-  const aspectLabels = topAspects(chunks);
-
   if (intent === "positive") {
+    const praiseChunks = chunks.filter(isPraiseEvidenceChunk);
+    const aspectLabels = topAspects(praiseChunks, "positive");
+
     return aspectLabels.length
       ? `Customers mostly praise ${joinHumanList(aspectLabels)}.`
       : "Customers are generally positive, but the retrieved comments do not cluster around one clear praise theme.";
+  }
+
+  const complaintChunks = chunks.filter(isComplaintEvidenceChunk);
+  const aspectLabels = topAspects(complaintChunks, "negative");
+
+  if (!complaintChunks.length) {
+    return "I did not find complaint evidence in the retrieved reviews/comments.";
   }
 
   return aspectLabels.length
@@ -136,7 +153,7 @@ export function buildFallbackAnswer(query, chunks, session) {
 
 function buildSessionSentimentAnswer(metrics, session) {
   const total = metrics.total_reviews ?? session?.reviewCount ?? 0;
-  return `Overall sentiment is ${dominantSentiment(metrics)} across ${total} indexed reviews, with ${roundPct(metrics.positive_pct)} positive, ${roundPct(metrics.negative_pct)} negative, and ${roundPct(metrics.mixed_pct)} mixed.`;
+  return `Overall sentiment is ${dominantSentiment(metrics)} across ${total} analyzed reviews, with ${roundPct(metrics.positive_pct)} positive, ${roundPct(metrics.negative_pct)} negative, and ${roundPct(metrics.mixed_pct)} mixed.`;
 }
 
 function formatChunkBlock(chunk, index) {
@@ -172,7 +189,7 @@ function formatChunkBlock(chunk, index) {
   return `[${labelParts.join(" | ")}]\n${String(chunk.text || "").trim()}`;
 }
 
-function topAspects(chunks) {
+function topAspects(chunks, tone = "neutral") {
   return ASPECT_PATTERNS
     .map((aspect) => {
       const score = chunks.reduce((sum, chunk) => {
@@ -186,7 +203,52 @@ function topAspects(chunks) {
     .filter((aspect) => aspect.score > 0)
     .sort((left, right) => right.score - left.score)
     .slice(0, 3)
-    .map((aspect) => aspect.label);
+    .map((aspect) => aspectLabelForTone(aspect.label, tone));
+}
+
+function aspectLabelForTone(label, tone) {
+  if (tone !== "positive") {
+    return label;
+  }
+
+  switch (label) {
+    case "lights or product features failing":
+      return "lights or product features";
+    case "color or appearance":
+      return "style or appearance";
+    default:
+      return label;
+  }
+}
+
+function isComplaintEvidenceChunk(chunk) {
+  const text = String(chunk.text || "");
+  const label = String(chunk.metadata?.sentiment_label || "").toLowerCase();
+
+  if (label === "negative") {
+    return true;
+  }
+
+  if (label === "mixed") {
+    return NEGATIVE_SIGNAL.test(text);
+  }
+
+  return !label && NEGATIVE_SIGNAL.test(text) && !POSITIVE_SIGNAL.test(text);
+}
+
+function isPraiseEvidenceChunk(chunk) {
+  const text = String(chunk.text || "");
+  const label = String(chunk.metadata?.sentiment_label || "").toLowerCase();
+
+  if (label === "positive") {
+    return true;
+  }
+
+  if (label === "mixed") {
+    return POSITIVE_SIGNAL.test(text);
+  }
+
+  return !label && POSITIVE_SIGNAL.test(text) && !NEGATIVE_SIGNAL.test(text);
 }
 
 function hasSpecificSubject(query) {

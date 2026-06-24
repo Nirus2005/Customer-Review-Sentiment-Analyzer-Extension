@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Verdict extension icon">
+  <rect width="128" height="128" rx="28" fill="#111111"/>
+  <path d="M34 31h52c8 0 14 6 14 14v31c0 8-6 14-14 14H59l-17 14v-14h-8c-8 0-14-6-14-14V45c0-8 6-14 14-14z" fill="#ffffff"/>
+  <path d="M45 63l14 14 28-32" fill="none" stroke="#111111" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M94 20l4 10 10 4-10 4-4 10-4-10-10-4 10-4 4-10z" fill="#5eead4"/>
+  <circle cx="38" cy="49" r="5" fill="#111111" opacity="0.88"/>
+  <circle cx="55" cy="49" r="5" fill="#111111" opacity="0.88"/>
+</svg>

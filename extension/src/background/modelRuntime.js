@@ -15,7 +15,16 @@ import {
 } from "../constants/ragConfig.js";
 import { isDegenerateGeneratedText } from "../localRag/responseGuards.js";
 import { buildReviewRagMessages } from "../prompts/reviewRagPrompts.js";
-import { generateWithCloudApi, embedWithCloudApi, classifySentimentWithCloudApi } from "./cloudApi.js";
+import {
+  classifySentimentWithCloudApi,
+  embedWithCloudApi,
+  generateWithCloudApi,
+  isTokenLimitExceededError,
+} from "./cloudApi.js";
+import {
+  getEffectiveAiSettings,
+  switchAiSettingsToLocal,
+} from "../services/aiSettingsStorage.js";
 
 // We run CPU models in the service worker, so we skip local/remote checks.
 // But we still don't use the cache that might be broken.
@@ -44,6 +53,25 @@ const runtimeState = {
   activeGenerations: new Map(),
 };
 
+const OPENAI_COMPATIBLE_PROVIDERS = new Set([
+  "openai",
+  "groq",
+  "openrouter",
+  "together",
+  "mistral",
+  "deepseek",
+  "xai",
+  "cerebras",
+  "custom",
+]);
+
+const CLOUD_EMBEDDING_PROVIDERS = new Set([
+  "openai",
+  "gemini",
+  "together",
+  "mistral",
+]);
+
 export function configureTransformersEnvironment() {
   // Configured at module scope
 }
@@ -52,39 +80,54 @@ export async function markExtensionInstalled() {
   // Initialization hook for cache setup
 }
 
-async function getCloudCredentials() {
-  const storageResult = await new Promise(resolve => {
-    chrome.storage.local.get(["aiProvider", "aiApiKey", "aiBaseUrl", "aiModelName"], resolve);
-  });
-  const { aiProvider, aiApiKey, aiBaseUrl, aiModelName } = storageResult;
-  const isCloud = Boolean(aiProvider && aiProvider !== "local" && aiApiKey);
-  return { isCloud, aiProvider, aiApiKey, aiBaseUrl, aiModelName };
+async function getAiSettings() {
+  const storageResult = await getEffectiveAiSettings();
+  const provider = String(storageResult.aiProvider || "local").trim().toLowerCase();
+  const apiKey = String(storageResult.aiApiKey || "").trim();
+  const baseUrl = String(storageResult.aiBaseUrl || "").trim().replace(/\/+$/, "");
+  const modelName = String(storageResult.aiModelName || defaultModelName(provider)).trim();
+  const embeddingModelName = String(
+    storageResult.aiEmbeddingModelName || defaultEmbeddingModelName(provider),
+  ).trim();
+  const hasCloudTextModel = Boolean(
+    isSupportedCloudProvider(provider) &&
+    apiKey &&
+    modelName &&
+    (provider !== "custom" || baseUrl)
+  );
+  const hasCloudEmbeddingModel = Boolean(
+    hasCloudTextModel &&
+    providerSupportsCloudEmbedding(provider, embeddingModelName)
+  );
+
+  return {
+    provider,
+    apiKey,
+    baseUrl,
+    modelName,
+    embeddingModelName,
+    hasCloudTextModel,
+    hasCloudEmbeddingModel,
+  };
 }
 
 export async function initModels(roles = [
   MODEL_ROLES.EMBEDDING,
   MODEL_ROLES.SENTIMENT,
 ]) {
-  const { isCloud } = await getCloudCredentials();
-  
-  if (isCloud) {
-    // Skip loading local models if using cloud
-    runtimeState.initializedAt = new Date().toISOString();
-    return {
-      ok: true,
-      initializedAt: runtimeState.initializedAt,
-      webgpuAvailable: false,
-      models: {
-        [MODEL_ROLES.EMBEDDING]: { ok: true, config: { model: "cloud" } },
-        [MODEL_ROLES.SENTIMENT]: { ok: true, config: { model: "cloud" } },
-      },
-    };
-  }
-
+  const aiSettings = await getAiSettings();
   const requestedRoles = normalizeRoles(roles);
   const results = {};
 
   for (const role of requestedRoles) {
+    if (shouldUseCloudForRole(role, aiSettings)) {
+      results[role] = {
+        ok: true,
+        config: publicCloudModelConfig(role, aiSettings),
+      };
+      continue;
+    }
+
     try {
       await getPipeline(role);
       results[role] = {
@@ -130,17 +173,42 @@ export async function embedTexts(texts) {
     return { ok: true, embeddings: [] };
   }
 
-  const { isCloud, aiProvider, aiApiKey, aiBaseUrl } = await getCloudCredentials();
-  
-  if (isCloud) {
-    const embeddings = await embedWithCloudApi(cleanTexts, aiProvider, aiApiKey, aiBaseUrl);
-    return {
-      ok: true,
-      model: "cloud",
-      embeddings,
-    };
+  const aiSettings = await getAiSettings();
+
+  if (aiSettings.hasCloudEmbeddingModel) {
+    try {
+      const embeddings = await embedWithCloudApi(
+        cleanTexts,
+        aiSettings.provider,
+        aiSettings.apiKey,
+        aiSettings.baseUrl,
+        aiSettings.embeddingModelName,
+      );
+
+      return {
+        ok: true,
+        model: cloudModelLabel(MODEL_ROLES.EMBEDDING, aiSettings),
+        embeddings,
+      };
+    } catch (error) {
+      if (!isTokenLimitExceededError(error)) {
+        throw error;
+      }
+
+      await switchToLocalModel(error);
+      const localResult = await embedTextsWithLocalModel(cleanTexts);
+
+      return {
+        ...localResult,
+        fallbackReason: fallbackReasonFromError(error),
+      };
+    }
   }
 
+  return embedTextsWithLocalModel(cleanTexts);
+}
+
+async function embedTextsWithLocalModel(cleanTexts) {
   const extractor = await getPipeline(MODEL_ROLES.EMBEDDING);
   const output = await extractor(cleanTexts, {
     pooling: "mean",
@@ -161,17 +229,42 @@ export async function classifySentiment(texts) {
     return { ok: true, results: [] };
   }
 
-  const { isCloud, aiProvider, aiApiKey, aiBaseUrl, aiModelName } = await getCloudCredentials();
-  
-  if (isCloud) {
-    const results = await classifySentimentWithCloudApi(cleanTexts, aiProvider, aiApiKey, aiModelName, aiBaseUrl);
-    return {
-      ok: true,
-      model: "cloud",
-      results,
-    };
+  const aiSettings = await getAiSettings();
+
+  if (aiSettings.hasCloudTextModel) {
+    try {
+      const results = await classifySentimentWithCloudApi(
+        cleanTexts,
+        aiSettings.provider,
+        aiSettings.apiKey,
+        aiSettings.modelName,
+        aiSettings.baseUrl,
+      );
+
+      return {
+        ok: true,
+        model: cloudModelLabel(MODEL_ROLES.SENTIMENT, aiSettings),
+        results,
+      };
+    } catch (error) {
+      if (!isTokenLimitExceededError(error)) {
+        throw error;
+      }
+
+      await switchToLocalModel(error);
+      const localResult = await classifySentimentWithLocalModel(cleanTexts);
+
+      return {
+        ...localResult,
+        fallbackReason: fallbackReasonFromError(error),
+      };
+    }
   }
 
+  return classifySentimentWithLocalModel(cleanTexts);
+}
+
+async function classifySentimentWithLocalModel(cleanTexts) {
   const classifier = await getPipeline(MODEL_ROLES.SENTIMENT);
   const output = await classifier(cleanTexts);
 
@@ -184,10 +277,9 @@ export async function classifySentiment(texts) {
 
 export async function streamGenerationToPort(port, message) {
   const requestId = message.requestId || crypto.randomUUID();
+  const aiSettings = await getAiSettings();
 
-  const { isCloud, aiProvider, aiApiKey, aiBaseUrl, aiModelName } = await getCloudCredentials();
-
-  if (isCloud) {
+  if (aiSettings.hasCloudTextModel) {
     const prompt = buildReviewRagMessages({
       context: message.context || "No review context available.",
       recentChat: message.recentChat || "No previous chat history.",
@@ -195,17 +287,52 @@ export async function streamGenerationToPort(port, message) {
       sessionAnalytics: message.sessionAnalytics || "No session analytics available.",
       answerStyle: message.answerStyle || "Answer briefly in natural language.",
       userQuery: message.query || "",
-      isCloud,
+      isCloud: true,
     });
     
     safePostMessage(port, {
       type: "START",
       requestId,
-      model: "cloud",
+      model: cloudModelLabel(MODEL_ROLES.GENERATOR, aiSettings),
     });
-    return generateWithCloudApi(prompt, port, requestId, aiProvider, aiApiKey, aiModelName, aiBaseUrl);
+
+    try {
+      return await generateWithCloudApi({
+        messages: prompt,
+        port,
+        requestId,
+        provider: aiSettings.provider,
+        apiKey: aiSettings.apiKey,
+        modelName: aiSettings.modelName,
+        baseUrl: aiSettings.baseUrl,
+        maxOutputTokens: message.maxNewTokens || RAG_LIMITS.maxNewTokens,
+      });
+    } catch (error) {
+      if (!isTokenLimitExceededError(error)) {
+        safePostMessage(port, {
+          type: "ERROR",
+          requestId,
+          error: error.message,
+        });
+        return;
+      }
+
+      await switchToLocalModel(error);
+      safePostMessage(port, {
+        type: "TOKEN",
+        requestId,
+        token: "",
+        text: "The cloud model hit its token limit, so I switched this extension back to local mode.",
+      });
+
+      return streamGenerationWithLocalModel(port, message, requestId);
+    }
   }
 
+  return streamGenerationWithLocalModel(port, message, requestId);
+}
+
+async function streamGenerationWithLocalModel(port, message, requestId) {
   const prompt = buildReviewRagMessages({
     context: message.context || "No review context available.",
     recentChat: message.recentChat || "No previous chat history.",
@@ -308,6 +435,100 @@ export function cancelGeneration(requestId) {
   generationState.cancelled = true;
   generationState.stoppingCriteria.interrupt();
   return true;
+}
+
+function shouldUseCloudForRole(role, aiSettings) {
+  if (role === MODEL_ROLES.EMBEDDING) {
+    return aiSettings.hasCloudEmbeddingModel;
+  }
+
+  if (role === MODEL_ROLES.SENTIMENT || role === MODEL_ROLES.GENERATOR) {
+    return aiSettings.hasCloudTextModel;
+  }
+
+  return false;
+}
+
+function publicCloudModelConfig(role, aiSettings) {
+  return {
+    role,
+    task: role === MODEL_ROLES.EMBEDDING ? "cloud-embedding" : "cloud-chat",
+    model: cloudModelLabel(role, aiSettings),
+    device: "cloud",
+    dtype: "remote",
+  };
+}
+
+function cloudModelLabel(role, aiSettings) {
+  const modelName = role === MODEL_ROLES.EMBEDDING
+    ? aiSettings.embeddingModelName
+    : aiSettings.modelName;
+
+  return `${aiSettings.provider}:${modelName || "configured-model"}`;
+}
+
+async function switchToLocalModel(error) {
+  await switchAiSettingsToLocal(fallbackReasonFromError(error));
+}
+
+function fallbackReasonFromError(error) {
+  const message = error?.message || "Cloud provider token limit exceeded.";
+
+  return `Cloud token limit exceeded. Switched back to local mode. ${message}`;
+}
+
+function isSupportedCloudProvider(provider) {
+  return provider === "gemini" || provider === "anthropic" || OPENAI_COMPATIBLE_PROVIDERS.has(provider);
+}
+
+function providerSupportsCloudEmbedding(provider, embeddingModelName) {
+  if (provider === "custom" || provider === "together") {
+    return Boolean(embeddingModelName);
+  }
+
+  return CLOUD_EMBEDDING_PROVIDERS.has(provider);
+}
+
+function defaultModelName(provider) {
+  switch (provider) {
+    case "openai":
+      return "gpt-4o-mini";
+    case "gemini":
+      return "gemini-1.5-flash";
+    case "anthropic":
+      return "claude-3-5-haiku-latest";
+    case "groq":
+      return "llama-3.3-70b-versatile";
+    case "openrouter":
+      return "openai/gpt-5.2";
+    case "together":
+      return "MiniMaxAI/MiniMax-M3";
+    case "mistral":
+      return "mistral-small-latest";
+    case "deepseek":
+      return "deepseek-chat";
+    case "xai":
+      return "grok-4-latest";
+    case "cerebras":
+      return "llama-3.3-70b";
+    default:
+      return "";
+  }
+}
+
+function defaultEmbeddingModelName(provider) {
+  switch (provider) {
+    case "openai":
+      return "text-embedding-3-small";
+    case "gemini":
+      return "text-embedding-004";
+    case "together":
+      return "";
+    case "mistral":
+      return "mistral-embed";
+    default:
+      return "";
+  }
 }
 
 async function getPipeline(role) {

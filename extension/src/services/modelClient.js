@@ -8,15 +8,29 @@ import {
   isDegenerateGeneratedText,
 } from "../localRag/responseGuards.js";
 
-export async function classifyTextsLocally(texts, reportProgress = () => {}, signal) {
+export async function classifyTextsLocally(texts, reportProgress = () => {}, signal, progressOptions = {}) {
   const results = [];
 
   await runInBatches(texts, RAG_LIMITS.sentimentBatchSize, async (batch, completed, total) => {
-    reportProgress(`Classifying sentiment locally (${completed}/${total})...`);
+    reportProgress({
+      stage: progressOptions.stage || "classifying",
+      message: `Analyzing review sentiment (${completed}/${total})...`,
+      current: completed,
+      total,
+    });
     const response = await sendWorkerMessage({
       type: MESSAGE_TYPES.CLASSIFY_SENTIMENT,
       texts: batch,
     });
+
+    if (response.fallbackReason) {
+      reportProgress({
+        stage: progressOptions.stage || "classifying",
+        message: response.fallbackReason,
+        current: completed,
+        total,
+      });
+    }
 
     results.push(...(response.results || []));
   }, signal);
@@ -24,15 +38,29 @@ export async function classifyTextsLocally(texts, reportProgress = () => {}, sig
   return results;
 }
 
-export async function embedTextsLocally(texts, reportProgress = () => {}, signal) {
+export async function embedTextsLocally(texts, reportProgress = () => {}, signal, progressOptions = {}) {
   const embeddings = [];
 
   await runInBatches(texts, RAG_LIMITS.embeddingBatchSize, async (batch, completed, total) => {
-    reportProgress(`Embedding local chunks (${completed}/${total})...`);
+    reportProgress({
+      stage: progressOptions.stage || "indexing",
+      message: `Building searchable review index (${completed}/${total})...`,
+      current: completed,
+      total,
+    });
     const response = await sendWorkerMessage({
       type: MESSAGE_TYPES.EMBED_TEXTS,
       texts: batch,
     });
+
+    if (response.fallbackReason) {
+      reportProgress({
+        stage: progressOptions.stage || "indexing",
+        message: response.fallbackReason,
+        current: completed,
+        total,
+      });
+    }
 
     embeddings.push(...(response.embeddings || []));
   }, signal);
@@ -120,7 +148,7 @@ export function streamLocalGeneration({
 
         const safeDisplayText = cleanStreamingAnswer(finalText);
 
-        if (safeDisplayText && safeDisplayText !== displayedText) {
+        if (onToken && safeDisplayText && safeDisplayText !== displayedText) {
           displayedText = safeDisplayText;
           onToken(safeDisplayText);
         }

@@ -126,6 +126,17 @@ function readFromStore(db, storeName, key) {
   });
 }
 
+function writeToStore(db, storeName, value) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(storeName, "readwrite");
+    const store = transaction.objectStore(storeName);
+    const request = store.put(value);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
 function stripSessionChunks(session) {
   const { chunks: _chunks, ...storedSession } = session;
   return storedSession;

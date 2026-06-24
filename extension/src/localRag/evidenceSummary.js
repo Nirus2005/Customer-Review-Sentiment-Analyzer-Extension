@@ -8,10 +8,14 @@ import {
 } from "./reviewProcessing.js";
 
 const COMPLAINT_QUERY_SIGNAL = /\b(?:complaint|complaints|concern|concerns|dislike|dislikes|issue|issues|negative|problem|problems|risk|risks|bad|worst|wrong)\b/i;
+const BALANCED_QUERY_SIGNAL = /\b(?:pros\s+and\s+cons|positive\s+and\s+negative|good\s+and\s+bad|strengths\s+and\s+weaknesses|advantages\s+and\s+disadvantages)\b/i;
 const OVERALL_QUERY_SIGNAL = /\b(?:common\s+opinion|customer\s+opinion|customers?\s+think|general\s+opinion|general\s+sentiment|general\s+view|overall|opinion|sentiment|summary|summarize|verdict)\b/i;
 const PRAISE_QUERY_SIGNAL = /\b(?:like|likes|love|positive|praise|pros|good|great|best)\b/i;
 const COMPLAINT_ANSWER_SIGNAL = /\b(?:customers?\s+mainly\s+complain|complain|complaint|concern|concerns|dislike|issue|issues|problem|problems|defect|defective|fail|failed|failing|poor|bad|worse|worst|stopped|wore\s+out|uncomfortable)\b/i;
+const ASSERTIVE_COMPLAINT_ANSWER_SIGNAL = /\b(?:customers?\s+(?:mainly|mostly|commonly)?\s*(?:complain|raise concerns|dislike)|main complaints?|major complaints?|common complaints?|issues?\s+include|problems?\s+include|concerns?\s+include|negative themes?\s+include)\b/i;
 const PRAISE_ANSWER_SIGNAL = /\b(?:customers?\s+(?:mostly\s+)?praise|mostly\s+positive|generally\s+positive|love|like|recommend|excellent|great|top[-\s]?notch|premium)\b/i;
+const ASSERTIVE_PRAISE_ANSWER_SIGNAL = /\b(?:customers?\s+(?:mostly|mainly|commonly)?\s*(?:praise|like|love|recommend)|main positives?|major positives?|positive themes?\s+include|pros?\s+include)\b/i;
+const NO_EVIDENCE_ANSWER_SIGNAL = /\b(?:could not|couldn't|did not|didn't|do not|don't|no|not enough|nothing)\b.{0,90}\b(?:complaint|complaints|concern|concerns|issue|issues|problem|problems|negative|positive|praise|evidence|relevant)\b/i;
 
 const POSITIVE_DESCRIPTORS = [
   ["premium", "premium"],
@@ -44,8 +48,29 @@ const NEGATIVE_DESCRIPTORS = [
   ["not comfortable", "not comfortable"],
 ];
 
+const SUMMARY_STYLE_TERMS = new Set([
+  "advantage",
+  "advantages",
+  "bad",
+  "con",
+  "cons",
+  "disadvantage",
+  "disadvantages",
+  "good",
+  "negative",
+  "positive",
+  "pro",
+  "pros",
+  "summarize",
+  "summary",
+]);
+
 export function inferFallbackIntent(query) {
   const lowerQuery = String(query || "").toLowerCase();
+
+  if (BALANCED_QUERY_SIGNAL.test(lowerQuery)) {
+    return "balanced";
+  }
 
   if (PRAISE_QUERY_SIGNAL.test(lowerQuery)) {
     return "positive";
@@ -62,6 +87,50 @@ export function inferFallbackIntent(query) {
   return "neutral";
 }
 
+export function buildBalancedFallbackAnswer(query, chunks) {
+  const queryTerms = meaningfulQueryTerms(query);
+  const subjectTerms = queryTerms.filter((term) => !SUMMARY_STYLE_TERMS.has(term));
+  const focusedChunks = focusChunksByQuery(chunks, subjectTerms);
+  const praiseChunks = focusedChunks.filter(isPraiseEvidenceChunk);
+  const complaintChunks = focusedChunks.filter(isComplaintEvidenceChunk);
+  const praiseDescriptors = evidenceDescriptors(praiseChunks, subjectTerms, {
+    positiveRatio: 1,
+    negativeRatio: 0,
+  });
+  const complaintDescriptors = evidenceDescriptors(complaintChunks, subjectTerms, {
+    positiveRatio: 0,
+    negativeRatio: 1,
+  });
+  const pros = praiseDescriptors.length
+    ? joinHumanList(praiseDescriptors)
+    : praiseChunks.length
+      ? "generally positive experiences"
+      : "";
+  const cons = complaintDescriptors.length
+    ? joinHumanList(complaintDescriptors)
+    : complaintChunks.length
+      ? "some negative or mixed experiences"
+      : "";
+
+  if (!focusedChunks.length) {
+    return "I could not find anything relevant to that in the analyzed reviews/comments.";
+  }
+
+  if (pros && cons) {
+    return `Pros: customers praise ${pros}. Cons: customers raise concerns about ${cons}.`;
+  }
+
+  if (pros) {
+    return `Pros: customers praise ${pros}. Cons: I did not find clear complaint evidence in the retrieved reviews/comments.`;
+  }
+
+  if (cons) {
+    return `Pros: I did not find clear praise evidence in the retrieved reviews/comments. Cons: customers raise concerns about ${cons}.`;
+  }
+
+  return "The retrieved reviews do not provide enough clear positive or negative evidence for a pros and cons summary.";
+}
+
 export function buildAspectFallbackAnswer(query, chunks) {
   const queryTerms = meaningfulQueryTerms(query);
   const subject = querySubject(queryTerms);
@@ -73,7 +142,7 @@ export function buildAspectFallbackAnswer(query, chunks) {
     : "";
 
   if (!focusedChunks.length) {
-    return "I could not find anything relevant to that in the indexed reviews/comments.";
+    return "I could not find anything relevant to that in the analyzed reviews/comments.";
   }
 
   if (evidence.positiveRatio >= 0.6 && evidence.negativeRatio < 0.3) {
@@ -107,7 +176,7 @@ export function buildOverallFallbackAnswer(query, chunks) {
     : "";
 
   if (!focusedChunks.length) {
-    return "I could not find anything relevant to that in the indexed reviews/comments.";
+    return "I could not find anything relevant to that in the analyzed reviews/comments.";
   }
 
   if (evidence.positiveRatio >= 0.45 && evidence.negativeRatio < 0.25) {
@@ -141,12 +210,21 @@ export function answerContradictsEvidence(answer, chunks, analysis) {
   const asksForPraise = analysis?.querySentiment === "positive" || analysis?.queryIntent === "positive";
   const positiveHeavy = evidence.positiveRatio >= 0.75 && evidence.negativeRatio <= 0.2;
   const negativeHeavy = evidence.negativeRatio >= 0.65 && evidence.positiveRatio <= 0.25;
+  const noEvidenceAnswer = NO_EVIDENCE_ANSWER_SIGNAL.test(answerText);
 
-  if (!asksForComplaint && positiveHeavy && COMPLAINT_ANSWER_SIGNAL.test(answerText)) {
+  if (!asksForComplaint && positiveHeavy && COMPLAINT_ANSWER_SIGNAL.test(answerText) && !noEvidenceAnswer) {
     return true;
   }
 
-  if (!asksForPraise && negativeHeavy && PRAISE_ANSWER_SIGNAL.test(answerText)) {
+  if (asksForComplaint && positiveHeavy && ASSERTIVE_COMPLAINT_ANSWER_SIGNAL.test(answerText) && !noEvidenceAnswer) {
+    return true;
+  }
+
+  if (!asksForPraise && negativeHeavy && PRAISE_ANSWER_SIGNAL.test(answerText) && !noEvidenceAnswer) {
+    return true;
+  }
+
+  if (asksForPraise && negativeHeavy && ASSERTIVE_PRAISE_ANSWER_SIGNAL.test(answerText) && !noEvidenceAnswer) {
     return true;
   }
 
@@ -221,6 +299,36 @@ function evidenceDescriptors(chunks, queryTerms, evidence) {
     .sort((left, right) => right[1] - left[1])
     .slice(0, 3)
     .map(([label]) => label);
+}
+
+function isComplaintEvidenceChunk(chunk) {
+  const text = String(chunk.text || "");
+  const label = String(chunk.metadata?.sentiment_label || "").toLowerCase();
+
+  if (label === "negative") {
+    return true;
+  }
+
+  if (label === "mixed") {
+    return NEGATIVE_SIGNAL.test(text);
+  }
+
+  return !label && NEGATIVE_SIGNAL.test(text) && !POSITIVE_SIGNAL.test(text);
+}
+
+function isPraiseEvidenceChunk(chunk) {
+  const text = String(chunk.text || "");
+  const label = String(chunk.metadata?.sentiment_label || "").toLowerCase();
+
+  if (label === "positive") {
+    return true;
+  }
+
+  if (label === "mixed") {
+    return POSITIVE_SIGNAL.test(text);
+  }
+
+  return !label && POSITIVE_SIGNAL.test(text) && !NEGATIVE_SIGNAL.test(text);
 }
 
 function querySubject(queryTerms) {

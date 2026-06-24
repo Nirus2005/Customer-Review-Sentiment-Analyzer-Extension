@@ -1,481 +1,380 @@
-export function scrapeReviewsFromPage(limit) {
+import {
+  calculateReviewConfidence,
+} from "./confidenceScoring.js";
+import {
+  collectReviewContainers,
+  closestReviewContainer,
+  extractReviewMetadata,
+  reviewTextFromContainer,
+} from "./domReviewExtractor.js";
+import {
+  queryAllWithin,
+  resolveScrapeRoot,
+} from "./domUtils.js";
+import {
+  extractJsonLdReviews,
+} from "./jsonLdExtractor.js";
+import {
+  createSeenTracker,
+  isDuplicateReview,
+  rememberReview,
+} from "./reviewDedupe.js";
+import {
+  FALLBACK_TEXT_SELECTORS,
+} from "./selectors.js";
+import {
+  cleanCandidateText,
+  isUsefulReviewText,
+} from "./textUtils.js";
+import {
+  detectRepeatedStructures,
+} from "./structuralDetector.js";
+
+const DEFAULT_CONFIDENCE_THRESHOLD = 0.52;
+
+export function scrapeReviewsFromPage(limit, options = {}) {
+  const runtimeOptions = normalizeRuntimeOptions(options);
   const scrapeLimit = Number.isFinite(Number(limit)) && Number(limit) > 0
     ? Number(limit)
     : Number.POSITIVE_INFINITY;
-
-  function parseCompactNumberInPage(value) {
-    const match = String(value || "")
-      .replace(/,/g, "")
-      .match(/(\d+(?:\.\d+)?)\s*([kKmM])?/);
-
-    if (!match) {
-      return null;
-    }
-
-    const multiplier = match[2]?.toLowerCase() === "m"
-      ? 1_000_000
-      : match[2]?.toLowerCase() === "k"
-        ? 1_000
-        : 1;
-    const parsed = Number(match[1]) * multiplier;
-
-    return Number.isFinite(parsed) ? Math.round(parsed) : null;
-  }
-
-  function cleanCandidateText(value) {
-    return String(value || "")
-      .replace(/\b(?:Read more|Show less|Verified Purchase|Helpful|Report)\b/gi, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  function isUsefulReviewText(text) {
-    const normalized = cleanCandidateText(text);
-    const wordCount = normalized.split(/\s+/).filter(Boolean).length;
-
-    if (normalized.length < 20 || normalized.length > 1800 || wordCount < 4) {
-      return false;
-    }
-
-    const lowerText = normalized.toLowerCase();
-    const blockedTexts = [
-      "customer reviews",
-      "write a review",
-      "sort by",
-      "filter by",
-      "back to top",
-      "loading",
-    ];
-
-    return !blockedTexts.some((blockedText) => lowerText === blockedText);
-  }
-
-  function extractRatingFromTextInPage(text) {
-    const normalized = String(text || "").replace(/\s+/g, " ");
-    const outOfMatch = normalized.match(/(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*(5|10)\s*(?:stars?|rating)?/i);
-
-    if (outOfMatch) {
-      return {
-        rating: Number(outOfMatch[1]),
-        rating_max: Number(outOfMatch[2]),
-      };
-    }
-
-    const starMatch = normalized.match(/(\d+(?:\.\d+)?)\s*stars?/i);
-
-    if (starMatch) {
-      return {
-        rating: Number(starMatch[1]),
-        rating_max: 5,
-      };
-    }
-
-    return {};
-  }
-
-  function closestReviewContainer(element) {
-    return (
-      element.closest(
-        [
-          "ytd-comment-thread-renderer",
-          "[data-hook='review']",
-          "[data-review-id]",
-          "[data-testid*='review' i]",
-          "[aria-label*='review' i]",
-          "[class*='review' i]",
-          "[class*='comment' i]",
-          ".review",
-          ".comment",
-          "article",
-        ].join(","),
-      ) || element
-    );
-  }
-
-  function extractElementNumberInPage(container, selectors, blockedWords = []) {
-    const candidates = Array.from(container.querySelectorAll(selectors.join(",")));
-
-    for (const candidate of candidates) {
-      const text = [
-        candidate.getAttribute("aria-label"),
-        candidate.getAttribute("title"),
-        candidate.getAttribute("data-count"),
-        candidate.getAttribute("data-testid"),
-        candidate.innerText,
-        candidate.textContent,
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const lowerText = text.toLowerCase();
-
-      if (blockedWords.some((word) => lowerText.includes(word))) {
-        continue;
-      }
-
-      const count = parseCompactNumberInPage(text);
-
-      if (count !== null) {
-        return count;
-      }
-    }
-
-    return null;
-  }
-
-  function extractTextCountInPage(text, patterns) {
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-
-      if (match) {
-        return parseCompactNumberInPage(match[1]);
-      }
-    }
-
-    return null;
-  }
-
-  function extractReviewDateInPage(container, containerText) {
-    const dateElement = container.querySelector(
-      [
-        "time[datetime]",
-        "[datetime]",
-        "[data-hook*='review-date' i]",
-        "[class*='date' i]",
-        "[aria-label*='date' i]",
-      ].join(","),
-    );
-    const explicitDate = [
-      dateElement?.getAttribute("datetime"),
-      dateElement?.getAttribute("title"),
-      dateElement?.getAttribute("aria-label"),
-      dateElement?.innerText,
-    ]
-      .filter(Boolean)
-      .map((value) => String(value).replace(/\s+/g, " ").trim())
-      .find(Boolean);
-
-    if (explicitDate) {
-      return explicitDate;
-    }
-
-    const datePatterns = [
-      /\b\d{4}-\d{2}-\d{2}\b/,
-      /\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\b/i,
-      /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}\b/i,
-    ];
-
-    for (const pattern of datePatterns) {
-      const match = containerText.match(pattern);
-
-      if (match) {
-        return match[0].replace(/\s+/g, " ").trim();
-      }
-    }
-
-    return null;
-  }
-
-  function extractReviewMetadataInPage(element) {
-    const container = closestReviewContainer(element);
-    const containerText = cleanCandidateText(container.innerText || container.textContent || "");
-    const metadata = {};
-    const ratingElement = container.querySelector(
-      [
-        "[itemprop='ratingValue']",
-        "[data-hook='review-star-rating']",
-        "[data-hook='cmps-review-star-rating']",
-        "[aria-label*='star' i]",
-        "[aria-label*='rating' i]",
-        "[title*='star' i]",
-        "[title*='rating' i]",
-        "[class*='rating' i]",
-        "[class*='star' i]",
-      ].join(","),
-    );
-    const ratingText = [
-      ratingElement?.getAttribute("content"),
-      ratingElement?.getAttribute("aria-label"),
-      ratingElement?.getAttribute("title"),
-      ratingElement?.innerText,
-      container.getAttribute("aria-label"),
-      containerText,
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-    Object.assign(metadata, extractRatingFromTextInPage(ratingText));
-
-    const upvotes = extractElementNumberInPage(
-      container,
-      [
-        "[data-hook='helpful-vote-statement']",
-        "[aria-label*='like' i]",
-        "[aria-label*='upvote' i]",
-        "[aria-label*='helpful' i]",
-        "[title*='like' i]",
-        "[title*='upvote' i]",
-        "[title*='helpful' i]",
-        "[class*='like' i]",
-        "[class*='upvote' i]",
-        "[class*='helpful' i]",
-      ],
-      ["dislike", "downvote"],
-    ) ?? extractTextCountInPage(containerText, [
-      /(\d[\d,.]*\s*[kKmM]?)\s*(?:people\s+found\s+this\s+helpful|found\s+this\s+helpful|helpful|upvotes?|likes?)/i,
-    ]);
-
-    if (upvotes !== null) {
-      metadata.upvotes = upvotes;
-    }
-
-    const downvotes = extractElementNumberInPage(
-      container,
-      [
-        "[aria-label*='dislike' i]",
-        "[aria-label*='downvote' i]",
-        "[title*='dislike' i]",
-        "[title*='downvote' i]",
-        "[class*='dislike' i]",
-        "[class*='downvote' i]",
-      ],
-    ) ?? extractTextCountInPage(containerText, [
-      /(\d[\d,.]*\s*[kKmM]?)\s*(?:downvotes?|dislikes?)/i,
-    ]);
-
-    if (downvotes !== null) {
-      metadata.downvotes = downvotes;
-    }
-
-    const helpfulMatch = containerText.match(/(\d[\d,.]*\s*[kKmM]?)\s+(?:people\s+)?(?:found\s+this\s+)?helpful/i);
-
-    if (helpfulMatch) {
-      const helpfulVotes = parseCompactNumberInPage(helpfulMatch[1]);
-
-      if (helpfulVotes !== null) {
-        metadata.helpful_votes = helpfulVotes;
-        metadata.helpfulness = `${helpfulVotes} helpful`;
-      }
-    }
-
-    const reviewDate = extractReviewDateInPage(container, containerText);
-
-    if (reviewDate) {
-      metadata.date = reviewDate;
-    }
-
-    return metadata;
-  }
-
-  function addReviewFromElement(element, seen, reviews) {
-    const text = cleanCandidateText(element.innerText || element.textContent || "");
-
-    if (!isUsefulReviewText(text)) {
-      return false;
-    }
-
-    const key = text.toLowerCase();
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    reviews.push({
-      text,
-      ...extractReviewMetadataInPage(element),
-    });
-
-    return true;
-  }
-
-  function reviewTextFromContainer(container) {
-    const textSelectors = [
-      "[data-hook='review-title']",
-      "[data-hook='review-body']",
-      "[data-hook='review-collapsed']",
-      "[data-testid*='review-title' i]",
-      "[data-testid*='review-body' i]",
-      "[data-testid*='comment' i]",
-      "[class*='review-title' i]",
-      "[class*='review-body' i]",
-      "[class*='review-text' i]",
-      "[class*='review-content' i]",
-      "[class*='comment-text' i]",
-      "[class*='content-text' i]",
-      "#content-text",
-    ];
-    const parts = [];
-    const seenParts = new Set();
-
-    for (const candidate of Array.from(container.querySelectorAll(textSelectors.join(",")))) {
-      const text = cleanCandidateText(candidate.innerText || candidate.textContent || "");
-      const key = text.toLowerCase();
-
-      if (isUsefulReviewText(text) && !seenParts.has(key)) {
-        seenParts.add(key);
-        parts.push(text);
-      }
-    }
-
-    const combinedText = parts.join(" ").trim();
-
-    if (isUsefulReviewText(combinedText)) {
-      return combinedText;
-    }
-
-    return cleanCandidateText(container.innerText || container.textContent || "");
-  }
-
-  function addReviewFromContainer(container, seen, reviews) {
-    const text = reviewTextFromContainer(container);
-
-    if (!isUsefulReviewText(text)) {
-      return false;
-    }
-
-    const key = text.toLowerCase();
-
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    reviews.push({
-      text,
-      ...extractReviewMetadataInPage(container),
-    });
-
-    return true;
-  }
-
-  const containerSelectors = [
-    "ytd-comment-thread-renderer",
-    "[data-hook='review']",
-    "[data-review-id]",
-    "[data-testid*='review' i]",
-    "[aria-label*='review' i]",
-    "[class*='review' i]",
-    "[class*='comment' i]",
-    "article",
-  ];
-  const fallbackTextSelectors = [
-    "ytd-comment-thread-renderer #content-text",
-    "[data-hook='review-body']",
-    "[data-hook='review-collapsed']",
-    "[data-testid*='review-body' i]",
-    "[data-testid*='comment' i]",
-    ".review-text",
-    ".review-content",
-    ".comment-text",
-  ];
-
-  function collectReviewContainers() {
-    const containers = [];
-    const seenKeys = new Set();
-
-    function addContainer(container) {
-      if (!container || container === document.body || container === document.documentElement) {
-        return;
-      }
-
-      const text = reviewTextFromContainer(container);
-
-      if (!isUsefulReviewText(text)) {
-        return;
-      }
-
-      const key = (
-        container.getAttribute("data-review-id") ||
-        container.id ||
-        text.toLowerCase()
-      );
-
-      if (seenKeys.has(key) || containers.some((existingContainer) => existingContainer.contains(container))) {
-        return;
-      }
-
-      for (let index = containers.length - 1; index >= 0; index -= 1) {
-        if (container.contains(containers[index])) {
-          containers.splice(index, 1);
-        }
-      }
-
-      seenKeys.add(key);
-      containers.push(container);
-    }
-
-    for (const selector of containerSelectors) {
-      Array.from(document.querySelectorAll(selector)).forEach(addContainer);
-    }
-
-    // Heuristic for arbitrary divs: Find elements that look like ratings
-    // and try using their parent containers as review containers.
-    const ratingSelectors = [
-      "[itemprop='ratingValue']",
-      "[data-hook='review-star-rating']",
-      "[data-hook='cmps-review-star-rating']",
-      "[aria-label*='star' i]",
-      "[aria-label*='rating' i]",
-      "[title*='star' i]",
-      "[title*='rating' i]",
-      "[class*='rating' i]",
-      "[class*='star' i]",
-      "._3LWZlK",
-      ".XQDdHH"
-    ];
-
-    for (const selector of ratingSelectors) {
-      Array.from(document.querySelectorAll(selector)).forEach((ratingEl) => {
-        let container = ratingEl.parentElement;
-        // Go up a few levels to find a container with enough text
-        for (let i = 0; i < 5 && container; i++) {
-          if (container.innerText && container.innerText.length > 50) {
-            addContainer(container);
-            // Don't break immediately, let addContainer handle nesting/duplicates
-          }
-          container = container.parentElement;
-        }
-      });
-    }
-
-    return containers;
-  }
-
-  const seen = new Set();
+  const confidenceThreshold = Number.isFinite(Number(runtimeOptions.confidenceThreshold))
+    ? Number(runtimeOptions.confidenceThreshold)
+    : DEFAULT_CONFIDENCE_THRESHOLD;
+  const debugEnabled = Boolean(runtimeOptions.debug);
+  const debugEvents = [];
+  const selectionOnly = Boolean(runtimeOptions.selectionOnly || runtimeOptions.mode === "selection");
+  const root = resolveScrapeRoot(runtimeOptions, selectionOnly);
+  const selectionIntersectsElement = createSelectionIntersectsElement(selectionOnly);
+  const seen = createSeenTracker();
   const reviews = [];
 
-  for (const container of collectReviewContainers()) {
-    addReviewFromContainer(container, seen, reviews);
+  function debugLog(message, details = {}) {
+    if (!debugEnabled) {
+      return;
+    }
 
-    if (reviews.length >= scrapeLimit) {
-      return {
-        reviews,
-        hitLimit: true,
-      };
+    const entry = {
+      message,
+      ...details,
+    };
+
+    debugEvents.push(entry);
+
+    if (typeof console !== "undefined" && typeof console.debug === "function") {
+      console.debug("[Verdict scraper]", message, details);
     }
   }
 
-  for (const selector of fallbackTextSelectors) {
-    const elements = Array.from(document.querySelectorAll(selector));
+  function scrapeMetadata() {
+    return {
+      selectionOnly,
+      selectionFound: Boolean(selectionOnly && root),
+      usedSelection: Boolean(selectionOnly && root),
+      ...(debugEnabled ? { debug: debugEvents } : {}),
+    };
+  }
 
-    for (const element of elements) {
+  function finish(hitLimit = false) {
+    return {
+      reviews,
+      hitLimit,
+      ...scrapeMetadata(),
+    };
+  }
+
+  if (!root) {
+    return finish(false);
+  }
+
+  // JSON-LD is the highest-confidence source and runs before DOM scraping.
+  if (!selectionOnly || runtimeOptions.includeJsonLdInSelection) {
+    for (const review of extractJsonLdReviews(root, { debugLog })) {
+      addReviewCandidate({
+        review,
+        score: {
+          value: 0.98,
+          positive: [{ amount: 0.98, reason: "JSON-LD Review schema" }],
+          negative: [],
+          threshold: confidenceThreshold,
+        },
+      });
+
+      if (limitReached()) {
+        return finish(true);
+      }
+    }
+  }
+
+  for (const structuralCandidate of detectRepeatedStructures(root, {
+    debugLog,
+    reviewTextFromContainer,
+    runtimeOptions,
+  })) {
+    if (!candidateIntersectsSelection(structuralCandidate.element)) {
+      continue;
+    }
+
+    addReviewCandidate(buildContainerCandidate(
+      structuralCandidate.element,
+      "structural",
+      structuralCandidate.group,
+    ));
+
+    if (limitReached()) {
+      return finish(true);
+    }
+  }
+
+  for (const container of collectReviewContainers(root, {
+    debugLog,
+    reviewTextFromContainer,
+  })) {
+    if (!candidateIntersectsSelection(container)) {
+      continue;
+    }
+
+    addReviewCandidate(buildContainerCandidate(container, "legacy-selector"));
+
+    if (limitReached()) {
+      return finish(true);
+    }
+  }
+
+  for (const selector of FALLBACK_TEXT_SELECTORS) {
+    for (const element of queryAllWithin(root, selector)) {
       if (closestReviewContainer(element) !== element) {
         continue;
       }
 
-      addReviewFromElement(element, seen, reviews);
+      if (!candidateIntersectsSelection(element)) {
+        continue;
+      }
 
-      if (reviews.length >= scrapeLimit) {
-        return {
-          reviews,
-          hitLimit: true,
-        };
+      addReviewCandidate(buildElementCandidate(element, "fallback-text"));
+
+      if (limitReached()) {
+        return finish(true);
       }
     }
   }
 
+  if (selectionOnly && !reviews.length && runtimeOptions.allowSelectionTextFallback !== false) {
+    addReviewCandidate(buildSelectionTextCandidate());
+  }
+
+  return finish(false);
+
+  function buildContainerCandidate(container, strategy, structuralGroup = null) {
+    const text = reviewTextFromContainer(container);
+
+    if (!isUsefulReviewText(text)) {
+      return null;
+    }
+
+    const metadata = extractReviewMetadata(container);
+    const score = calculateReviewConfidence(
+      {
+        element: container,
+        metadata,
+        strategy,
+        structuralGroup,
+        text,
+      },
+      { confidenceThreshold },
+    );
+
+    return {
+      review: {
+        text,
+        ...metadata,
+        source_id: container.getAttribute("data-review-id") || container.id || null,
+        extraction_strategy: strategy,
+        confidence_score: score.value,
+      },
+      score,
+    };
+  }
+
+  function buildElementCandidate(element, strategy) {
+    const text = cleanCandidateText(element.innerText || element.textContent || "");
+
+    if (!isUsefulReviewText(text)) {
+      return null;
+    }
+
+    const metadata = extractReviewMetadata(element);
+    const score = calculateReviewConfidence(
+      {
+        element,
+        metadata,
+        strategy,
+        structuralGroup: null,
+        text,
+      },
+      { confidenceThreshold },
+    );
+
+    return {
+      review: {
+        text,
+        ...metadata,
+        extraction_strategy: strategy,
+        confidence_score: score.value,
+      },
+      score,
+    };
+  }
+
+  function buildSelectionTextCandidate() {
+    const text = selectedTextFromPage();
+
+    if (!isUsefulReviewText(text)) {
+      return null;
+    }
+
+    const score = {
+      value: Math.max(confidenceThreshold, 0.78),
+      positive: [{ amount: 0.78, reason: "Selected text fallback" }],
+      negative: [],
+      threshold: confidenceThreshold,
+    };
+
+    return {
+      review: {
+        text,
+        extraction_strategy: "selection-text",
+        confidence_score: score.value,
+      },
+      score,
+    };
+  }
+
+  function addReviewCandidate(candidate) {
+    if (!candidate?.review?.text) {
+      return false;
+    }
+
+    if (candidate.score.value < confidenceThreshold) {
+      debugLog("Rejected review candidate below confidence threshold.", {
+        strategy: candidate.review.extraction_strategy,
+        confidence: candidate.score.value,
+        threshold: confidenceThreshold,
+        textPreview: candidate.review.text.slice(0, 120),
+        breakdown: candidate.score,
+      });
+      return false;
+    }
+
+    if (isDuplicateReview(candidate.review.text, seen)) {
+      debugLog("Rejected duplicate review candidate.", {
+        strategy: candidate.review.extraction_strategy,
+        confidence: candidate.score.value,
+        textPreview: candidate.review.text.slice(0, 120),
+      });
+      return false;
+    }
+
+    rememberReview(candidate.review.text, seen);
+    reviews.push(debugEnabled
+      ? {
+        ...candidate.review,
+        confidence_breakdown: candidate.score,
+      }
+      : candidate.review);
+
+    debugLog("Accepted review candidate.", {
+      strategy: candidate.review.extraction_strategy,
+      confidence: candidate.score.value,
+      textPreview: candidate.review.text.slice(0, 120),
+      breakdown: candidate.score,
+    });
+
+    return true;
+  }
+
+  function limitReached() {
+    return reviews.length >= scrapeLimit;
+  }
+
+  function candidateIntersectsSelection(element) {
+    return !selectionIntersectsElement || selectionIntersectsElement(element);
+  }
+}
+
+export function scrapeReviewsFromSelection(limit, options = {}) {
+  return scrapeReviewsFromPage(limit, {
+    ...(options && typeof options === "object" ? options : {}),
+    selectionOnly: true,
+  });
+}
+
+function normalizeRuntimeOptions(options) {
+  const globalConfig = (
+    typeof globalThis !== "undefined" &&
+    globalThis.__VERDICT_SCRAPER_CONFIG__ &&
+    typeof globalThis.__VERDICT_SCRAPER_CONFIG__ === "object"
+  )
+    ? globalThis.__VERDICT_SCRAPER_CONFIG__
+    : {};
+
   return {
-    reviews,
-    hitLimit: false,
+    ...globalConfig,
+    ...(options && typeof options === "object" ? options : {}),
   };
+}
+
+function createSelectionIntersectsElement(selectionOnly) {
+  if (!selectionOnly || typeof window === "undefined" || typeof window.getSelection !== "function") {
+    return null;
+  }
+
+  const selection = window.getSelection();
+  const selectedText = cleanCandidateText(selection?.toString() || "");
+
+  if (!selection || selection.rangeCount === 0 || !selectedText) {
+    return () => false;
+  }
+
+  const ranges = [];
+
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    try {
+      ranges.push(selection.getRangeAt(index));
+    } catch {
+      // Ignore invalid browser selection ranges.
+    }
+  }
+
+  if (!ranges.length) {
+    return () => false;
+  }
+
+  return (element) => ranges.some((range) => rangeIntersectsElement(range, element, selectedText));
+}
+
+function rangeIntersectsElement(range, element, selectedText) {
+  if (!element) {
+    return false;
+  }
+
+  try {
+    return range.intersectsNode(element);
+  } catch {
+    const elementText = cleanCandidateText(element.innerText || element.textContent || "");
+    const selectedSnippet = selectedText.slice(0, 120);
+
+    return Boolean(
+      elementText &&
+      selectedSnippet &&
+      (elementText.includes(selectedSnippet) || selectedText.includes(elementText.slice(0, 120))),
+    );
+  }
+}
+
+function selectedTextFromPage() {
+  if (typeof window === "undefined" || typeof window.getSelection !== "function") {
+    return "";
+  }
+
+  return cleanCandidateText(window.getSelection()?.toString() || "");
 }

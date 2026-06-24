@@ -1,4 +1,4 @@
-const FALLBACK_ANSWER = "I could not find anything relevant to that in the indexed reviews/comments.";
+const FALLBACK_ANSWER = "I could not find anything relevant to that in the analyzed reviews/comments.";
 const UNSAFE_SCRIPT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/u;
 
 export function cleanAssistantAnswer(answer, userQuestion = "") {

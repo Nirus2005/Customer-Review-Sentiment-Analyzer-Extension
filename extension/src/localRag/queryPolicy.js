@@ -120,14 +120,14 @@ function sentimentLabelsForQuery(querySentiment) {
 
 export function fallbackAnswerForQuerySentiment(querySentiment) {
   if (querySentiment === "negative") {
-    return "I could not find negative review evidence relevant to that in the indexed reviews/comments.";
+    return "I could not find negative review evidence relevant to that in the analyzed reviews/comments.";
   }
 
   if (querySentiment === "positive") {
-    return "I could not find positive review evidence relevant to that in the indexed reviews/comments.";
+    return "I could not find positive review evidence relevant to that in the analyzed reviews/comments.";
   }
 
-  return "I could not find anything relevant to that in the indexed reviews/comments.";
+  return "I could not find anything relevant to that in the analyzed reviews/comments.";
 }
 
 function limitsForIntent(queryIntent) {

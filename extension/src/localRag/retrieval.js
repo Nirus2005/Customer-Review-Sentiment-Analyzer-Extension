@@ -2,6 +2,47 @@ import { RAG_LIMITS } from "../constants/ragConfig.js";
 import { RETRIEVAL_STOP_WORDS } from "../constants/queryLexicon.js";
 import { NEGATIVE_SIGNAL, POSITIVE_SIGNAL } from "./reviewProcessing.js";
 
+const QUERY_INTENT_ONLY_TERMS = new Set([
+  "bad",
+  "complaint",
+  "complaints",
+  "concern",
+  "concerns",
+  "con",
+  "cons",
+  "dislike",
+  "drawback",
+  "drawbacks",
+  "good",
+  "great",
+  "issue",
+  "issues",
+  "like",
+  "liked",
+  "likes",
+  "love",
+  "loved",
+  "negative",
+  "positive",
+  "problem",
+  "problems",
+  "pro",
+  "pros",
+  "risk",
+  "risks",
+]);
+
+const QUERY_TERM_ALIASES = {
+  delivered: ["deliver", "delivered", "delivery"],
+  delivery: ["deliver", "delivered", "delivery"],
+  durability: ["durability", "durable"],
+  package: ["package", "packaged", "packaging"],
+  packaging: ["package", "packaged", "packaging"],
+  ship: ["ship", "shipped", "shipping"],
+  shipped: ["ship", "shipped", "shipping"],
+  shipping: ["ship", "shipped", "shipping"],
+};
+
 export function retrieveRelevantChunks({
   chunks,
   query,
@@ -10,13 +51,19 @@ export function retrieveRelevantChunks({
 }) {
   const limits = analysis?.limits || {};
   const filter = buildQueryFilter(analysis, query);
+  const queryTerms = meaningfulTerms(query);
+  const subjectTerms = subjectTermsForQuery(queryTerms);
+  const hasStrictSentimentFilter = Boolean(filter.sentimentLabels);
   let candidates = applyQueryFilter(chunks, filter);
+  candidates = focusCandidatesBySubjectTerms(candidates, subjectTerms, hasStrictSentimentFilter);
 
-  if (candidates.length < (limits.minSourceCount || RAG_LIMITS.minSourceCount)) {
+  if (
+    candidates.length < (limits.minSourceCount || RAG_LIMITS.minSourceCount) &&
+    !hasStrictSentimentFilter
+  ) {
     candidates = chunks;
   }
 
-  const queryTerms = meaningfulTerms(query);
   const scoredChunks = candidates
     .map((chunk) => {
       const cosine = cosineSimilarity(queryEmbedding, chunk.embedding || []);
@@ -191,6 +238,23 @@ function applyQueryFilter(chunks, filter) {
   return chunks.filter((chunk) => {
     const metadata = chunk.metadata || {};
     const label = String(metadata.sentiment_label || "mixed").toLowerCase();
+    const text = String(chunk.text || "");
+
+    if (filter.intent === "negative") {
+      if (label === "negative") {
+        return true;
+      }
+
+      return label === "mixed" && NEGATIVE_SIGNAL.test(text);
+    }
+
+    if (filter.intent === "positive") {
+      if (label === "positive") {
+        return true;
+      }
+
+      return label === "mixed" && POSITIVE_SIGNAL.test(text);
+    }
 
     if (filter.sentimentLabels && !filter.sentimentLabels.includes(label)) {
       return false;
@@ -213,6 +277,35 @@ function applyQueryFilter(chunks, filter) {
     }
 
     return true;
+  });
+}
+
+function focusCandidatesBySubjectTerms(candidates, subjectTerms, requireSubjectMatch) {
+  if (!subjectTerms.length || !candidates.length) {
+    return candidates;
+  }
+
+  const focusedCandidates = candidates.filter((chunk) => (
+    textMatchesAnySubjectTerm(chunk.text, subjectTerms)
+  ));
+
+  if (focusedCandidates.length || requireSubjectMatch) {
+    return focusedCandidates;
+  }
+
+  return candidates;
+}
+
+function subjectTermsForQuery(queryTerms) {
+  return queryTerms.filter((term) => !QUERY_INTENT_ONLY_TERMS.has(term));
+}
+
+function textMatchesAnySubjectTerm(text, subjectTerms) {
+  const normalizedText = ` ${String(text || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ")} `;
+
+  return subjectTerms.some((term) => {
+    const aliases = QUERY_TERM_ALIASES[term] || [term];
+    return aliases.some((alias) => normalizedText.includes(` ${alias} `));
   });
 }
 

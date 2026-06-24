@@ -7,11 +7,19 @@ import {
 
 const CONTRAST_SIGNAL = /\b(?:although|but|except|however|though|while|yet)\b/i;
 
-export function prepareReviewIndexPlan(reviews, sessionId) {
+export function prepareReviewIndexPlan(reviews, sessionId, options = {}) {
   const identifiedReviews = reviews.map((review, index) => withReviewIdentity(review, sessionId, index));
   const metricReviews = identifiedReviews.map(estimateReviewSentiment);
+  const requestedInitialLimit = Number(options.initialReviewLimit);
+  const configuredInitialLimit = Number.isFinite(requestedInitialLimit) && requestedInitialLimit > 0
+    ? requestedInitialLimit
+    : RAG_LIMITS.maxInitialIndexedReviews;
+  const initialIndexLimit = Math.max(1, Math.min(
+    Math.round(configuredInitialLimit),
+    RAG_LIMITS.maxInitialIndexedReviews,
+  ));
 
-  if (identifiedReviews.length <= RAG_LIMITS.fullIndexReviewLimit) {
+  if (identifiedReviews.length <= Math.min(RAG_LIMITS.fullIndexReviewLimit, initialIndexLimit)) {
     return {
       initialReviews: identifiedReviews,
       backlogReviews: [],
@@ -21,7 +29,7 @@ export function prepareReviewIndexPlan(reviews, sessionId) {
     };
   }
 
-  const initialLimit = Math.min(RAG_LIMITS.maxInitialIndexedReviews, identifiedReviews.length);
+  const initialLimit = Math.min(initialIndexLimit, identifiedReviews.length);
   const priorityLimit = Math.max(1, Math.floor(initialLimit * 0.7));
   const scoredReviews = identifiedReviews
     .map((review) => ({
@@ -121,9 +129,12 @@ export function estimateReviewSentiment(review) {
 }
 
 function withReviewIdentity(review, sessionId, index) {
+  const sourceReviewId = review.id || review.source_id || null;
+
   return {
     ...review,
-    id: review.id || `${sessionId}-review-${index + 1}`,
+    id: `${sessionId}-review-${index + 1}`,
+    source_id: sourceReviewId,
     original_index: Number.isInteger(review.original_index) ? review.original_index : index,
   };
 }

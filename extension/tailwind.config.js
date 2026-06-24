@@ -7,22 +7,22 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#003135",
-        muted: "#024950",
+        ink: "#111111",
+        muted: "#666666",
         panel: "#ffffff",
-        shell: "#F6FAFA",
-        surface: "#E9F7F9",
+        shell: "#fafafa",
+        surface: "#f5f5f5",
         primary: {
-          DEFAULT: "#003135",
-          hover: "#024950",
-          soft: "#DDF3F6",
+          DEFAULT: "#111111",
+          hover: "#000000",
+          soft: "#f4f4f5",
         },
-        accent: "#0FA4AF",
-        contrast: "#964734",
+        accent: "#111111",
+        contrast: "#111111",
       },
       boxShadow: {
-        popup: "0 8px 22px rgba(0, 49, 53, 0.12)",
-        bubble: "0 5px 12px rgba(0, 49, 53, 0.18)",
+        popup: "0 10px 30px rgba(0, 0, 0, 0.08)",
+        bubble: "0 4px 12px rgba(0, 0, 0, 0.08)",
       },
     },
   },

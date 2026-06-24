@@ -1,4 +1,5 @@
 export const MESSAGE_TYPES = {
+  OPEN_POPUP_FOR_SELECTION: "VERDICT/OPEN_POPUP_FOR_SELECTION",
   INIT_MODELS: "LOCAL_RAG/INIT_MODELS",
   MODEL_STATUS: "LOCAL_RAG/MODEL_STATUS",
   EMBED_TEXTS: "LOCAL_RAG/EMBED_TEXTS",
@@ -6,6 +7,8 @@ export const MESSAGE_TYPES = {
   GENERATE: "LOCAL_RAG/GENERATE",
   CANCEL_GENERATION: "LOCAL_RAG/CANCEL_GENERATION",
 };
+
+export const SELECTION_LAUNCH_STORAGE_KEY = "verdict.selectionLaunch";
 
 export const PORT_NAMES = {
   GENERATION: "LOCAL_RAG/GENERATION_STREAM",
@@ -52,10 +55,11 @@ export const RAG_LIMITS = {
   maxSummaryTokens: 180,
   displaySourceCount: 4,
   generationTimeoutMs: 150_000,
-  sentimentBatchSize: 16,
+  sentimentBatchSize: 10,
   embeddingBatchSize: 16,
-  fullIndexReviewLimit: 500,
-  maxInitialIndexedReviews: 500,
+  fullIndexReviewLimit: 50,
+  localInitialIndexedReviews: 20,
+  maxInitialIndexedReviews: 50,
   maxLazyIndexedReviewsPerQuery: 32,
   maxStoredBacklogReviews: 3000,
 };

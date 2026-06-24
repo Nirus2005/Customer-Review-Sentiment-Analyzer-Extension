@@ -118,3 +118,110 @@ export async function generateWithCloudApi(prompt, port, requestId, aiProvider, 
     } catch {}
   }
 }
+
+export async function embedWithCloudApi(texts, aiProvider, aiApiKey, aiBaseUrl) {
+  let endpoint = "";
+  let headers = { "Content-Type": "application/json" };
+  let body = {};
+
+  if (aiProvider === "gemini") {
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key=${aiApiKey}`;
+    body = {
+      requests: texts.map(text => ({
+        model: "models/text-embedding-004",
+        content: { parts: [{ text }] }
+      }))
+    };
+  } else if (aiProvider === "openai" || aiProvider === "custom") {
+    endpoint = aiProvider === "openai" ? "https://api.openai.com/v1/embeddings" : `${aiBaseUrl}/embeddings`;
+    headers["Authorization"] = `Bearer ${aiApiKey}`;
+    body = {
+      model: "text-embedding-3-small", // default model for OpenAI
+      input: texts
+    };
+  } else {
+    throw new Error(`Unsupported AI Provider for embeddings: ${aiProvider}`);
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Embedding API Error ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+
+  if (aiProvider === "gemini") {
+    return data.embeddings.map(e => e.values);
+  } else {
+    // OpenAI format
+    return data.data.map(d => d.embedding);
+  }
+}
+
+export async function classifySentimentWithCloudApi(texts, aiProvider, aiApiKey, aiModelName, aiBaseUrl) {
+  let endpoint = "";
+  let headers = { "Content-Type": "application/json" };
+  let body = {};
+
+  const promptText = `Classify the sentiment of the following texts. You must reply with ONLY a valid JSON array of strings, where each string is exactly "Positive", "Negative", or "Mixed". Do not include any markdown formatting, backticks, or other text. There should be exactly ${texts.length} strings in the array. \n\nTexts:\n${JSON.stringify(texts)}`;
+
+  if (aiProvider === "gemini") {
+    // Use the user's configured model
+    endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${aiModelName}:generateContent?key=${aiApiKey}`;
+    body = {
+      contents: [{ role: "user", parts: [{ text: promptText }] }]
+    };
+  } else if (aiProvider === "openai" || aiProvider === "custom") {
+    endpoint = aiProvider === "openai" ? "https://api.openai.com/v1/chat/completions" : `${aiBaseUrl}/chat/completions`;
+    headers["Authorization"] = `Bearer ${aiApiKey}`;
+    body = {
+      model: aiModelName || "gpt-4o-mini",
+      messages: [{ role: "user", content: promptText }]
+    };
+  }
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Sentiment API Error ${response.status}: ${errText}`);
+  }
+
+  const data = await response.json();
+  let resultText = "";
+
+  if (aiProvider === "gemini") {
+    resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+  } else {
+    resultText = data.choices?.[0]?.message?.content || "[]";
+  }
+
+  // Clean the text to ensure it parses as JSON
+  resultText = resultText.replace(/```json/g, "").replace(/```/g, "").trim();
+  
+  try {
+    const jsonResult = JSON.parse(resultText);
+    if (Array.isArray(jsonResult)) {
+      // Return objects like the local model does: [{ label: 'POSITIVE', score: 0.99 }]
+      return jsonResult.map(label => ({
+        label: label.toUpperCase(),
+        score: 0.99 // dummy high score since LLM is confident
+      }));
+    }
+  } catch (e) {
+    console.error("Failed to parse JSON sentiment:", resultText);
+  }
+
+  // Fallback if parsing fails or returns invalid format
+  return texts.map(() => ({ label: 'MIXED', score: 0.5 }));
+}

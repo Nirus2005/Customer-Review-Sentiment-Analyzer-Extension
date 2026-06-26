@@ -6,32 +6,28 @@ const CHUNK_OVERLAP = 30;
 
 export const ASPECT_PATTERNS = [
   {
-    label: "lights or product features failing",
-    terms: ["light", "lights", "lighting", "lit", "battery", "working", "work"],
+    label: "product quality",
+    terms: ["quality", "durable", "durability", "broke", "broken", "sturdy", "flimsy", "stopped", "materials"],
   },
   {
-    label: "comfort and fit",
-    terms: ["comfortable", "uncomfortable", "comfort", "fit", "fits", "tight", "wear"],
+    label: "customer service",
+    terms: ["service", "support", "contact", "response", "helpful", "rude", "agent", "representative"],
   },
   {
-    label: "sizing accuracy",
-    terms: ["size", "sizing", "small", "large", "big", "narrow", "wide"],
-  },
-  {
-    label: "quality or durability",
-    terms: ["quality", "durable", "durability", "broke", "broken", "worn", "wear", "stopped"],
+    label: "usability or performance",
+    terms: ["easy", "hard", "use", "working", "performance", "fast", "slow", "intuitive", "setup"],
   },
   {
     label: "delivery or packaging",
-    terms: ["arrived", "delivery", "package", "packaging", "shipping", "late", "damaged"],
+    terms: ["arrived", "delivery", "package", "packaging", "shipping", "late", "damaged", "box"],
   },
   {
     label: "price and value",
-    terms: ["price", "expensive", "cheap", "cost", "value", "worth"],
+    terms: ["price", "expensive", "cheap", "cost", "value", "worth", "money"],
   },
   {
-    label: "color or appearance",
-    terms: ["beautiful", "color", "colors", "dull", "look", "looks", "style"],
+    label: "appearance or design",
+    terms: ["beautiful", "ugly", "look", "looks", "design", "style", "aesthetic"],
   },
 ];
 

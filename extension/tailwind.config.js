@@ -24,6 +24,15 @@ export default {
         popup: "0 10px 30px rgba(0, 0, 0, 0.08)",
         bubble: "0 4px 12px rgba(0, 0, 0, 0.08)",
       },
+      keyframes: {
+        indeterminate: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(300%)' },
+        }
+      },
+      animation: {
+        indeterminate: 'indeterminate 1.5s infinite ease-in-out',
+      }
     },
   },
   plugins: [],

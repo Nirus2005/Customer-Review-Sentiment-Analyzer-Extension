@@ -121,8 +121,6 @@ export const QUERY_TYPO_REPLACEMENTS = [
   [/\bopnion\b/g, "opinion"],
   [/\bopinon\b/g, "opinion"],
   [/\boppinion\b/g, "opinion"],
-  [/\bsandles\b/g, "sandals"],
-  [/\bsneekers\b/g, "sneakers"],
   [/\bcomfertable\b/g, "comfortable"],
   [/\bcomfortble\b/g, "comfortable"],
   [/\bqulaity\b/g, "quality"],

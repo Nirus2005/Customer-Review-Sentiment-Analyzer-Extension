@@ -66,12 +66,6 @@ export function LoadingProgressPanel({ icon }) {
               Verdict is preparing the reviews. Chat will open automatically when it is ready.
             </p>
           </div>
-
-          <div className="mt-3">
-            <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
-              <div className="h-full w-2/3 rounded-full bg-zinc-950 animate-pulse" />
-            </div>
-          </div>
         </div>
       </div>
     </section>

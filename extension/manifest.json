@@ -48,7 +48,12 @@
   "host_permissions": [
     "https://huggingface.co/*",
     "https://*.huggingface.co/*",
-    "https://*.hf.co/*",
+    "https://*.hf.co/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
     "https://api.openai.com/*",
     "https://generativelanguage.googleapis.com/*",
     "https://api.anthropic.com/*",
@@ -59,11 +64,6 @@
     "https://api.deepseek.com/*",
     "https://api.x.ai/*",
     "https://api.cerebras.ai/*"
-  ],
-  "optional_host_permissions": [
-    "https://*/*",
-    "http://localhost/*",
-    "http://127.0.0.1/*"
   ],
   "options_page": "dist/options.html"
 }

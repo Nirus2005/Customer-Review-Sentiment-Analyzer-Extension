@@ -214,11 +214,11 @@ export function SettingsPanel({ embedded = false, onSaved }) {
       return;
     }
 
-    if (provider === "custom") {
-      const granted = await requestCustomProviderPermission(baseUrl);
+    if (isCloudProvider) {
+      const granted = await requestProviderPermission(provider, baseUrl);
 
       if (!granted) {
-        setStatus("Custom provider permission was not granted.");
+        setStatus(`Permission was not granted for ${PROVIDER_LABELS[provider] || provider}.`);
         return;
       }
     }
@@ -314,11 +314,11 @@ export function SettingsPanel({ embedded = false, onSaved }) {
       return;
     }
 
-    if (provider === "custom") {
-      const granted = await requestCustomProviderPermission(baseUrl);
+    if (isCloudProvider) {
+      const granted = await requestProviderPermission(provider, baseUrl);
 
       if (!granted) {
-        setModelLookupStatus("Custom provider permission was not granted.");
+        setModelLookupStatus(`Permission was not granted for ${PROVIDER_LABELS[provider] || provider}.`);
         return;
       }
     }
@@ -594,23 +594,44 @@ export function SettingsPanel({ embedded = false, onSaved }) {
   );
 }
 
-function requestCustomProviderPermission(baseUrl) {
+function requestProviderPermission(provider, baseUrl) {
   if (!chrome.permissions?.request) {
     return Promise.resolve(true);
   }
 
-  let originPattern = "";
+  const knownOrigins = {
+    openai: "https://api.openai.com/*",
+    gemini: "https://generativelanguage.googleapis.com/*",
+    anthropic: "https://api.anthropic.com/*",
+    groq: "https://api.groq.com/*",
+    openrouter: "https://openrouter.ai/*",
+    together: "https://api.together.ai/*",
+    mistral: "https://api.mistral.ai/*",
+    deepseek: "https://api.deepseek.com/*",
+    xai: "https://api.x.ai/*",
+    cerebras: "https://api.cerebras.ai/*",
+  };
 
-  try {
-    const url = new URL(baseUrl);
-    originPattern = `${url.protocol}//${url.hostname}/*`;
-  } catch {
-    return Promise.resolve(false);
+  let origins = [];
+
+  if (provider === "custom") {
+    try {
+      const url = new URL(baseUrl);
+      origins = [`${url.protocol}//${url.hostname}/*`];
+    } catch {
+      return Promise.resolve(false);
+    }
+  } else if (knownOrigins[provider]) {
+    origins = [knownOrigins[provider]];
+  }
+
+  if (!origins.length) {
+    return Promise.resolve(true);
   }
 
   return new Promise((resolve) => {
     chrome.permissions.request({
-      origins: [originPattern],
+      origins,
     }, resolve);
   });
 }

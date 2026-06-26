@@ -212,10 +212,8 @@ function aspectLabelForTone(label, tone) {
   }
 
   switch (label) {
-    case "lights or product features failing":
-      return "lights or product features";
-    case "color or appearance":
-      return "style or appearance";
+    case "appearance or design":
+      return "appearance and design";
     default:
       return label;
   }

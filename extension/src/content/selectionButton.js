@@ -1,6 +1,6 @@
 const OPEN_POPUP_FOR_SELECTION = "VERDICT/OPEN_POPUP_FOR_SELECTION";
 const BUTTON_ID = "verdict-selection-action-root";
-const MIN_SELECTION_LENGTH = 16;
+const MIN_SELECTION_LENGTH = 4;
 const EDGE_PADDING = 10;
 const ESTIMATED_BUTTON_WIDTH = 242;
 const ESTIMATED_BUTTON_HEIGHT = 38;
@@ -46,7 +46,7 @@ function updateSelectionButton() {
   lastSelectionKey = selectionDetails.key;
   ensureButton();
   positionButton(selectionDetails.rect);
-  host.hidden = false;
+  host.style.display = 'block';
   resetButtonLabel();
 }
 
@@ -103,16 +103,18 @@ function bestRangeRect(range) {
 }
 
 function ensureButton() {
-  if (host && button) {
+  if (host && host.isConnected && button) {
     return;
   }
 
   host = document.getElementById(BUTTON_ID);
 
-  if (!host) {
-    host = document.createElement("div");
-    host.id = BUTTON_ID;
-    host.hidden = true;
+  if (!host || !host.isConnected) {
+    if (!host) {
+      host = document.createElement("div");
+      host.id = BUTTON_ID;
+    }
+    host.style.display = "none";
     host.style.position = "fixed";
     host.style.left = "0";
     host.style.top = "0";
@@ -215,7 +217,6 @@ function ensureButton() {
     button.type = "button";
     button.className = "action-button";
     button.innerHTML = '<span class="mark">V</span><span class="label">Analyze Reviews with Verdict</span>';
-    button.addEventListener("pointerdown", preserveSelection);
     button.addEventListener("mousedown", preserveSelection);
     button.addEventListener("click", handleButtonClick);
     closeButton = document.createElement("button");
@@ -224,9 +225,8 @@ function ensureButton() {
     closeButton.textContent = "x";
     closeButton.setAttribute("aria-label", "Hide Verdict selection button");
     closeButton.setAttribute("title", "Hide");
-    closeButton.addEventListener("pointerdown", handleCloseButtonDismiss);
     closeButton.addEventListener("mousedown", preserveSelection);
-    closeButton.addEventListener("click", preserveSelection);
+    closeButton.addEventListener("click", handleCloseButtonDismiss);
     wrapper.append(button, closeButton);
     shadow.appendChild(wrapper);
   }
@@ -321,7 +321,7 @@ function resetButtonLabel() {
 
 function hideButton() {
   if (host) {
-    host.hidden = true;
+    host.style.display = "none";
   }
 }
 

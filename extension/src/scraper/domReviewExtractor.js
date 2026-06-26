@@ -114,7 +114,26 @@ export function reviewTextFromContainer(container) {
     return combinedText;
   }
 
-  return cleanCandidateText(container.innerText || container.textContent || "");
+  // Fallback: DOM Pruning instead of just grabbing all innerText
+  const clone = container.cloneNode(true);
+  const noiseSelectors = [
+    'button',
+    'time',
+    'a',
+    '.author',
+    '.date',
+    '.avatar',
+    '[data-hook="review-date"]',
+    '[data-hook="review-author"]'
+  ];
+  
+  try {
+    clone.querySelectorAll(noiseSelectors.join(',')).forEach(el => el.remove());
+    return cleanCandidateText(clone.innerText || clone.textContent || "");
+  } catch (err) {
+    // Failsafe in case of DOM manipulation errors
+    return cleanCandidateText(container.innerText || container.textContent || "");
+  }
 }
 
 export function extractReviewMetadata(element) {
